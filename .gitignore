@@ -1,0 +1,17 @@
+# Zig
+zig-out/
+zig-cache/
+.zig-cache/
+
+# wgpu-native
+lib/wgpu-native/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Superpowers brainstorm sessions
+.superpowers/
