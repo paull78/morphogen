@@ -1,0 +1,8 @@
+.{
+    .name = .morphogen,
+    .fingerprint = 0x724d948d7ecb571,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{},
+    .paths = .{"."},
+}
