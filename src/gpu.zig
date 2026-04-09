@@ -4,6 +4,25 @@ const c = @cImport({
     @cInclude("wgpu.h");
 });
 
+const wgsl_shader =
+    \\@vertex
+    \\fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
+    \\    var pos = array<vec2f, 3>(
+    \\        vec2f(-1.0, -1.0),
+    \\        vec2f( 3.0, -1.0),
+    \\        vec2f(-1.0,  3.0),
+    \\    );
+    \\    return vec4f(pos[idx], 0.0, 1.0);
+    \\}
+    \\
+    \\@fragment
+    \\fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    \\    let uv = pos.xy / vec2f(800.0, 600.0);
+    \\    let col = vec3f(uv.x * 0.1, uv.y * 0.15, 0.2 + uv.y * 0.15);
+    \\    return vec4f(col, 1.0);
+    \\}
+;
+
 pub const Gpu = struct {
     instance: c.WGPUInstance,
     surface: c.WGPUSurface,
@@ -11,6 +30,7 @@ pub const Gpu = struct {
     device: c.WGPUDevice,
     queue: c.WGPUQueue,
     surface_config: c.WGPUSurfaceConfiguration,
+    pipeline: c.WGPURenderPipeline,
 
     pub fn init(metal_layer: *anyopaque, width: u32, height: u32) !Gpu {
         // Create instance
@@ -118,6 +138,57 @@ pub const Gpu = struct {
 
         c.wgpuSurfaceConfigure(surface, &config);
 
+        // Create shader module from WGSL source
+        var wgsl_source = std.mem.zeroes(c.WGPUShaderSourceWGSL);
+        wgsl_source.chain.sType = c.WGPUSType_ShaderSourceWGSL;
+        wgsl_source.chain.next = null;
+        wgsl_source.code = c.WGPUStringView{ .data = wgsl_shader.ptr, .length = wgsl_shader.len };
+
+        var shader_desc = std.mem.zeroes(c.WGPUShaderModuleDescriptor);
+        shader_desc.nextInChain = @ptrCast(&wgsl_source.chain);
+        shader_desc.label = c.WGPUStringView{ .data = "fullscreen_triangle", .length = 19 };
+
+        const shader_module = c.wgpuDeviceCreateShaderModule(device_result, &shader_desc);
+        defer c.wgpuShaderModuleRelease(shader_module);
+
+        // Color target: BGRA8Unorm, no blending, write all
+        const color_target = c.WGPUColorTargetState{
+            .nextInChain = null,
+            .format = c.WGPUTextureFormat_BGRA8Unorm,
+            .blend = null,
+            .writeMask = c.WGPUColorWriteMask_All,
+        };
+
+        // Fragment state
+        var fragment_state = std.mem.zeroes(c.WGPUFragmentState);
+        fragment_state.module = shader_module;
+        fragment_state.entryPoint = c.WGPUStringView{ .data = "fs_main", .length = 7 };
+        fragment_state.targetCount = 1;
+        fragment_state.targets = &color_target;
+
+        // Render pipeline descriptor
+        var pipeline_desc = std.mem.zeroes(c.WGPURenderPipelineDescriptor);
+        pipeline_desc.label = c.WGPUStringView{ .data = "fullscreen_pipeline", .length = 19 };
+        pipeline_desc.layout = null; // auto layout
+        pipeline_desc.vertex.module = shader_module;
+        pipeline_desc.vertex.entryPoint = c.WGPUStringView{ .data = "vs_main", .length = 7 };
+        pipeline_desc.vertex.bufferCount = 0;
+        pipeline_desc.vertex.buffers = null;
+        pipeline_desc.primitive.topology = c.WGPUPrimitiveTopology_TriangleList;
+        pipeline_desc.primitive.stripIndexFormat = c.WGPUIndexFormat_Undefined;
+        pipeline_desc.primitive.cullMode = c.WGPUCullMode_None;
+        pipeline_desc.multisample.count = 1;
+        pipeline_desc.multisample.mask = 0xFFFFFFFF;
+        pipeline_desc.multisample.alphaToCoverageEnabled = 0;
+        pipeline_desc.depthStencil = null;
+        pipeline_desc.fragment = &fragment_state;
+
+        const pipeline = c.wgpuDeviceCreateRenderPipeline(device_result, &pipeline_desc);
+        if (pipeline == null) {
+            std.debug.print("Failed to create render pipeline\n", .{});
+            return error.WGPURenderPipelineFailed;
+        }
+
         std.debug.print("morphogen: wgpu initialized ({}x{})\n", .{ width, height });
 
         return Gpu{
@@ -127,10 +198,12 @@ pub const Gpu = struct {
             .device = device_result,
             .queue = queue,
             .surface_config = config,
+            .pipeline = pipeline,
         };
     }
 
     pub fn deinit(self: *Gpu) void {
+        c.wgpuRenderPipelineRelease(self.pipeline);
         c.wgpuSurfaceUnconfigure(self.surface);
         c.wgpuQueueRelease(self.queue);
         c.wgpuDeviceRelease(self.device);
@@ -188,6 +261,8 @@ pub const Gpu = struct {
         render_pass_desc.timestampWrites = null;
 
         const render_pass = c.wgpuCommandEncoderBeginRenderPass(encoder, &render_pass_desc);
+        c.wgpuRenderPassEncoderSetPipeline(render_pass, self.pipeline);
+        c.wgpuRenderPassEncoderDraw(render_pass, 3, 1, 0, 0);
         c.wgpuRenderPassEncoderEnd(render_pass);
         c.wgpuRenderPassEncoderRelease(render_pass);
 

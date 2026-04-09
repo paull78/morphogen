@@ -95,12 +95,7 @@ pub fn main() !void {
             }
         }
 
-        const t: f64 = @as(f64, @floatFromInt(frame_count)) * 0.005;
-        const r = (@sin(t) + 1.0) * 0.15;
-        const g = (@sin(t + 2.094) + 1.0) * 0.15;
-        const b_val = (@sin(t + 4.189) + 1.0) * 0.25;
-
-        gpu.renderFrame(r, g, b_val);
+        gpu.renderFrame(0.0, 0.0, 0.0);
         frame_count += 1;
     }
 
