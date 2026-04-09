@@ -3,6 +3,11 @@
     .fingerprint = 0x724d948d7ecb571,
     .version = "0.0.1",
     .minimum_zig_version = "0.14.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .glfw = .{
+            .url = "git+https://github.com/falsepattern/zig-glfw#d7d336a606040cac8dde395a33ac5b02bd8d5c6d",
+            .hash = "glfw-0.3.0-YPzX96IuBQAxnlG-CIYgD6I-I47XwiJHRmjkKP--t_zv",
+        },
+    },
     .paths = .{"."},
 }

@@ -11,6 +11,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // GLFW
+    const glfw_dep = b.dependency("glfw", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("glfw", glfw_dep.module("glfw"));
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
