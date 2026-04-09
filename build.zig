@@ -18,6 +18,17 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("glfw", glfw_dep.module("glfw"));
 
+    // wgpu-native (vendored)
+    exe.addIncludePath(b.path("vendor/wgpu/include"));
+    exe.addObjectFile(b.path("vendor/wgpu/lib/libwgpu_native.a"));
+    exe.linkFramework("Metal");
+    exe.linkFramework("QuartzCore");
+    exe.linkFramework("Foundation");
+    exe.linkFramework("CoreGraphics");
+    exe.linkFramework("IOKit");
+    exe.linkFramework("IOSurface");
+    exe.linkLibC();
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

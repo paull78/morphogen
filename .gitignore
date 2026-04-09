@@ -5,6 +5,8 @@ zig-cache/
 
 # wgpu-native
 lib/wgpu-native/
+vendor/wgpu/lib/*.a
+vendor/wgpu/lib/*.dylib
 
 # OS
 .DS_Store
