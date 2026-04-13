@@ -35,10 +35,10 @@ This is a learning project. Development is organized as small incremental steps,
 
 ### First Visuals (raymarch + automaton)
 
-8. **Raymarch a static grid** — fullscreen quad + fragment shader, cast rays through the grid SSBO, render seeded cell as a colored voxel. First visual output.
-9. **Orbit camera** — mouse drag orbits, scroll zooms. See the voxel from all angles.
-10. **Cellular automaton: single step** — run one CA step (birth/survival rules), see neighbors appear. Pause/step with keyboard.
-11. **CA continuous growth** — run CA in a loop, watch structure grow from seed in real time. Tweak birth/survival rules via params.
+8. ~~**Raymarch a static grid** — fullscreen quad + fragment shader, cast rays through the grid SSBO, render seeded cell as a colored voxel. First visual output.~~ ✅
+9. ~~**Orbit camera** — mouse drag orbits, scroll zooms. See the voxel from all angles.~~ ✅
+10. ~~**Cellular automaton: single step** — run one CA step (birth/survival rules), see neighbors appear. Pause/step with keyboard.~~ ✅
+11. ~~**CA continuous growth** — run CA in a loop, watch structure grow from seed in real time. Tweak birth/survival rules via params.~~ ✅
 
 ### Signal & Branching (Phase 2)
 
