@@ -2,6 +2,7 @@ const std = @import("std");
 const glfw = @import("glfw");
 const Gpu = @import("gpu.zig").Gpu;
 const compute_test = @import("compute_test.zig");
+const Grid = @import("grid.zig").Grid;
 
 const objc = @cImport({
     @cInclude("objc/message.h");
@@ -85,6 +86,27 @@ pub fn main() !void {
     std.debug.print("morphogen: GPU initialized, rendering...\n", .{});
 
     try compute_test.run(gpu.device, gpu.queue, gpu.instance);
+
+    // Grid test: 8x8x8, 5 floats/cell (alive, r, g, b, a)
+    var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 8, 8, 8, 5);
+    defer grid.deinit();
+
+    const seed_data = [_]f32{ 1.0, 0.0, 0.8, 0.8, 1.0 };
+    grid.seedCenter(&seed_data);
+
+    const data = try grid.readBack();
+    const center_idx = grid.cellIndex(4, 4, 4);
+    std.debug.print("grid test: center cell = [{d:.1}, {d:.1}, {d:.1}, {d:.1}, {d:.1}]\n", .{
+        data[center_idx], data[center_idx + 1], data[center_idx + 2],
+        data[center_idx + 3], data[center_idx + 4],
+    });
+    const empty_idx = grid.cellIndex(0, 0, 0);
+    std.debug.print("grid test: empty cell  = [{d:.1}, {d:.1}, {d:.1}, {d:.1}, {d:.1}]\n", .{
+        data[empty_idx], data[empty_idx + 1], data[empty_idx + 2],
+        data[empty_idx + 3], data[empty_idx + 4],
+    });
+    grid.unmapStaging();
+    std.debug.print("grid test: PASSED\n", .{});
 
     var frame_count: u64 = 0;
 
