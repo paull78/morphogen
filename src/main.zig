@@ -1,8 +1,8 @@
 const std = @import("std");
 const glfw = @import("glfw");
 const Gpu = @import("gpu.zig").Gpu;
-const compute_test = @import("compute_test.zig");
 const Grid = @import("grid.zig").Grid;
+const Simulation = @import("simulation.zig").Simulation;
 
 const objc = @cImport({
     @cInclude("objc/message.h");
@@ -85,28 +85,42 @@ pub fn main() !void {
 
     std.debug.print("morphogen: GPU initialized, rendering...\n", .{});
 
-    try compute_test.run(gpu.device, gpu.queue, gpu.instance);
-
-    // Grid test: 8x8x8, 5 floats/cell (alive, r, g, b, a)
+    // Create grid: 8x8x8, 5 floats/cell
     var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 8, 8, 8, 5);
     defer grid.deinit();
 
-    const seed_data = [_]f32{ 1.0, 0.0, 0.8, 0.8, 1.0 };
+    const seed_data = [_]f32{ 1.0, 0.0, 1.0, 1.0, 1.0 };
     grid.seedCenter(&seed_data);
 
+    // Create simulation
+    var sim = try Simulation.init(gpu.device, &grid);
+    defer sim.deinit();
+
+    // Run one step: center + 6 neighbors = 7 alive
+    sim.step(&grid);
+
     const data = try grid.readBack();
-    const center_idx = grid.cellIndex(4, 4, 4);
-    std.debug.print("grid test: center cell = [{d:.1}, {d:.1}, {d:.1}, {d:.1}, {d:.1}]\n", .{
-        data[center_idx], data[center_idx + 1], data[center_idx + 2],
-        data[center_idx + 3], data[center_idx + 4],
-    });
-    const empty_idx = grid.cellIndex(0, 0, 0);
-    std.debug.print("grid test: empty cell  = [{d:.1}, {d:.1}, {d:.1}, {d:.1}, {d:.1}]\n", .{
-        data[empty_idx], data[empty_idx + 1], data[empty_idx + 2],
-        data[empty_idx + 3], data[empty_idx + 4],
-    });
+    var alive_count: u32 = 0;
+    const total = grid.totalCells();
+    for (0..@intCast(total)) |i| {
+        if (data[i * grid.floats_per_cell] > 0.5) {
+            alive_count += 1;
+        }
+    }
     grid.unmapStaging();
-    std.debug.print("grid test: PASSED\n", .{});
+    std.debug.print("simulation test: {d} alive cells after 1 step (expect 7)\n", .{alive_count});
+
+    // Run a second step
+    sim.step(&grid);
+    const data2 = try grid.readBack();
+    var alive_count2: u32 = 0;
+    for (0..@intCast(total)) |i| {
+        if (data2[i * grid.floats_per_cell] > 0.5) {
+            alive_count2 += 1;
+        }
+    }
+    grid.unmapStaging();
+    std.debug.print("simulation test: {d} alive cells after 2 steps\n", .{alive_count2});
 
     var frame_count: u64 = 0;
 
