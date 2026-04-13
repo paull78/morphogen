@@ -173,9 +173,9 @@ const wgsl_shader =
 ;
 
 // -- Matrix math helpers --
-const Vec3 = [3]f32;
+pub const Vec3 = [3]f32;
 const Vec4 = [4]f32;
-const Mat4 = [16]f32; // column-major
+pub const Mat4 = [16]f32; // column-major
 
 fn vec3Sub(a: Vec3, b: Vec3) Vec3 {
     return .{ a[0] - b[0], a[1] - b[1], a[2] - b[2] };
@@ -208,7 +208,7 @@ fn mat4Identity() Mat4 {
     return m;
 }
 
-fn mat4LookAt(eye: Vec3, target: Vec3, up: Vec3) Mat4 {
+pub fn mat4LookAt(eye: Vec3, target: Vec3, up: Vec3) Mat4 {
     const f = vec3Normalize(vec3Sub(target, eye));
     const s = vec3Normalize(vec3Cross(f, up));
     const u = vec3Cross(s, f);
@@ -230,7 +230,7 @@ fn mat4LookAt(eye: Vec3, target: Vec3, up: Vec3) Mat4 {
     return m;
 }
 
-fn mat4Perspective(fov_rad: f32, aspect: f32, near: f32, far: f32) Mat4 {
+pub fn mat4Perspective(fov_rad: f32, aspect: f32, near: f32, far: f32) Mat4 {
     const t = @tan(fov_rad / 2.0);
     var m = [_]f32{0} ** 16;
     m[0] = 1.0 / (aspect * t);
@@ -241,7 +241,7 @@ fn mat4Perspective(fov_rad: f32, aspect: f32, near: f32, far: f32) Mat4 {
     return m;
 }
 
-fn mat4Mul(a: Mat4, b: Mat4) Mat4 {
+pub fn mat4Mul(a: Mat4, b: Mat4) Mat4 {
     var r = [_]f32{0} ** 16;
     for (0..4) |col| {
         for (0..4) |row| {
@@ -255,7 +255,7 @@ fn mat4Mul(a: Mat4, b: Mat4) Mat4 {
     return r;
 }
 
-fn mat4Inverse(m: Mat4) Mat4 {
+pub fn mat4Inverse(m: Mat4) Mat4 {
     // Inline 4x4 matrix inverse (column-major)
     var inv: [16]f32 = undefined;
 

@@ -1,9 +1,10 @@
 const std = @import("std");
 const glfw = @import("glfw");
 const Gpu = @import("gpu.zig").Gpu;
-const gpu_mod = @import("gpu.zig");
 const Grid = @import("grid.zig").Grid;
 const Simulation = @import("simulation.zig").Simulation;
+const Camera = @import("camera.zig").Camera;
+const Input = @import("input.zig").Input;
 
 const objc = @cImport({
     @cInclude("objc/message.h");
@@ -103,10 +104,22 @@ pub fn main() !void {
         std.debug.print("simulation: step {d} done\n", .{i + 1});
     }
 
+    // Set up orbit camera and input handling
+    var camera = Camera.init();
+    var input = Input.init(&camera);
+    input.setupCallbacks(window);
+
     var frame_count: u64 = 0;
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
+        input.update(window);
+
+        // Handle camera reset
+        if (input.should_reset) {
+            camera = Camera.init();
+            input.should_reset = false;
+        }
 
         const size = window.getFramebufferSize();
         if (size.width != gpu.surface_config.width or size.height != gpu.surface_config.height) {
@@ -115,7 +128,7 @@ pub fn main() !void {
             }
         }
 
-        const camera_data = gpu_mod.buildCameraData(size.width, size.height);
+        const camera_data = camera.buildUniformData(size.width, size.height);
         gpu.renderFrameWithGrid(&grid, &camera_data);
         frame_count += 1;
     }
