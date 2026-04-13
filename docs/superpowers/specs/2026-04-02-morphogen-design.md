@@ -22,16 +22,16 @@ This is a learning project. Development is organized as small incremental steps,
 
 ### Foundation (build + window + GPU)
 
-1. **Hello Zig** — `build.zig` compiles and runs, prints to stdout. Verify toolchain works.
-2. **GLFW window** — blank window opens, responds to close. Learn Zig C interop with GLFW.
-3. **wgpu clear screen** — initialize wgpu device + surface, clear to a solid color each frame. Learn wgpu lifecycle.
-4. **Fullscreen triangle** — vertex + fragment shader, render a colored triangle. Learn wgpu render pipeline, WGSL basics.
+1. ~~**Hello Zig** — `build.zig` compiles and runs, prints to stdout. Verify toolchain works.~~ ✅
+2. ~~**GLFW window** — blank window opens, responds to close. Learn Zig C interop with GLFW.~~ ✅
+3. ~~**wgpu clear screen** — initialize wgpu device + surface, clear to a solid color each frame. Learn wgpu lifecycle.~~ ✅
+4. ~~**Fullscreen triangle** — vertex + fragment shader, render a colored triangle. Learn wgpu render pipeline, WGSL basics.~~ ✅
 
 ### Compute (GPU data + compute shaders)
 
-5. **Compute shader: buffer write** — compute shader writes values to a storage buffer, read back to CPU and print. Learn wgpu compute pipeline, bind groups.
-6. **3D grid buffer** — allocate grid SSBO, seed center cell from CPU, read back and verify. Learn buffer sizing, grid indexing.
-7. **Compute step on grid** — compute shader reads grid, applies a trivial rule (e.g., "spread alive to all neighbors"), writes to second buffer. Verify by reading back.
+5. ~~**Compute shader: buffer write** — compute shader writes values to a storage buffer, read back to CPU and print. Learn wgpu compute pipeline, bind groups.~~ ✅
+6. ~~**3D grid buffer** — allocate grid SSBO, seed center cell from CPU, read back and verify. Learn buffer sizing, grid indexing.~~ ✅
+7. ~~**Compute step on grid** — compute shader reads grid, applies a trivial rule (e.g., "spread alive to all neighbors"), writes to second buffer. Verify by reading back.~~ ✅
 
 ### First Visuals (raymarch + automaton)
 
