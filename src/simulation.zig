@@ -7,6 +7,10 @@ const Params = extern struct {
     height: u32,
     depth: u32,
     floats_per_cell: u32,
+    birth_min: u32,
+    birth_max: u32,
+    survival_min: u32,
+    survival_max: u32,
 };
 
 const shader_src =
@@ -15,6 +19,10 @@ const shader_src =
     \\    height: u32,
     \\    depth: u32,
     \\    floats_per_cell: u32,
+    \\    birth_min: u32,
+    \\    birth_max: u32,
+    \\    survival_min: u32,
+    \\    survival_max: u32,
     \\}
     \\
     \\@group(0) @binding(0) var<uniform> params: Params;
@@ -23,13 +31,6 @@ const shader_src =
     \\
     \\fn cell_index(x: u32, y: u32, z: u32) -> u32 {
     \\    return (z * params.height * params.width + y * params.width + x) * params.floats_per_cell;
-    \\}
-    \\
-    \\fn is_alive(x: u32, y: u32, z: u32) -> bool {
-    \\    if (x >= params.width || y >= params.height || z >= params.depth) {
-    \\        return false;
-    \\    }
-    \\    return grid_in[cell_index(x, y, z)] > 0.5;
     \\}
     \\
     \\@compute @workgroup_size(4, 4, 4)
@@ -45,30 +46,52 @@ const shader_src =
     \\    let idx = cell_index(x, y, z);
     \\    let alive = grid_in[idx] > 0.5;
     \\
-    \\    if (alive) {
-    \\        for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
-    \\            grid_out[idx + i] = grid_in[idx + i];
+    \\    // Count Moore neighborhood (26 neighbors)
+    \\    var count: u32 = 0;
+    \\    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
+    \\        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+    \\            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+    \\                if (dx == 0 && dy == 0 && dz == 0) { continue; }
+    \\                let nx = i32(x) + dx;
+    \\                let ny = i32(y) + dy;
+    \\                let nz = i32(z) + dz;
+    \\                if (nx >= 0 && nx < i32(params.width) &&
+    \\                    ny >= 0 && ny < i32(params.height) &&
+    \\                    nz >= 0 && nz < i32(params.depth)) {
+    \\                    if (grid_in[cell_index(u32(nx), u32(ny), u32(nz))] > 0.5) {
+    \\                        count = count + 1;
+    \\                    }
+    \\                }
+    \\            }
     \\        }
-    \\        return;
     \\    }
     \\
-    \\    var has_alive_neighbor = false;
-    \\    if (x > 0 && is_alive(x - 1, y, z)) { has_alive_neighbor = true; }
-    \\    if (x + 1 < params.width && is_alive(x + 1, y, z)) { has_alive_neighbor = true; }
-    \\    if (y > 0 && is_alive(x, y - 1, z)) { has_alive_neighbor = true; }
-    \\    if (y + 1 < params.height && is_alive(x, y + 1, z)) { has_alive_neighbor = true; }
-    \\    if (z > 0 && is_alive(x, y, z - 1)) { has_alive_neighbor = true; }
-    \\    if (z + 1 < params.depth && is_alive(x, y, z + 1)) { has_alive_neighbor = true; }
-    \\
-    \\    if (has_alive_neighbor) {
-    \\        grid_out[idx] = 1.0;
-    \\        grid_out[idx + 1] = 0.0;
-    \\        grid_out[idx + 2] = 0.6;
-    \\        grid_out[idx + 3] = 0.8;
-    \\        grid_out[idx + 4] = 1.0;
+    \\    if (alive) {
+    \\        if (count >= params.survival_min && count <= params.survival_max) {
+    \\            // Survive: copy cell through
+    \\            for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
+    \\                grid_out[idx + i] = grid_in[idx + i];
+    \\            }
+    \\        } else {
+    \\            // Die: write zeros
+    \\            for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
+    \\                grid_out[idx + i] = 0.0;
+    \\            }
+    \\        }
     \\    } else {
-    \\        for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
-    \\            grid_out[idx + i] = 0.0;
+    \\        if (count >= params.birth_min && count <= params.birth_max) {
+    \\            // Birth: become alive with color based on neighbor count
+    \\            let intensity = f32(count) / 8.0;
+    \\            grid_out[idx]     = 1.0;
+    \\            grid_out[idx + 1] = 0.1;
+    \\            grid_out[idx + 2] = 0.3 + intensity * 0.5;
+    \\            grid_out[idx + 3] = 0.5 + intensity * 0.3;
+    \\            grid_out[idx + 4] = 1.0;
+    \\        } else {
+    \\            // Stay dead
+    \\            for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
+    \\                grid_out[idx + i] = 0.0;
+    \\            }
     \\        }
     \\    }
     \\}
@@ -79,9 +102,20 @@ pub const Simulation = struct {
     pipeline: c.WGPUComputePipeline,
     bgl: c.WGPUBindGroupLayout,
     params_buf: c.WGPUBuffer,
+    birth_min: u32,
+    birth_max: u32,
+    survival_min: u32,
+    survival_max: u32,
 
-    pub fn init(device: c.WGPUDevice, grid: *const Grid) !Simulation {
-        // Params uniform buffer (16 bytes)
+    pub fn init(
+        device: c.WGPUDevice,
+        grid: *const Grid,
+        birth_min: u32,
+        birth_max: u32,
+        survival_min: u32,
+        survival_max: u32,
+    ) !Simulation {
+        // Params uniform buffer (32 bytes)
         var params_desc = std.mem.zeroes(c.WGPUBufferDescriptor);
         params_desc.label = c.WGPUStringView{ .data = "sim_params", .length = 10 };
         params_desc.size = @sizeOf(Params);
@@ -142,13 +176,19 @@ pub const Simulation = struct {
         const pipeline = c.wgpuDeviceCreateComputePipeline(device, &cp_desc) orelse
             return error.ComputePipelineFailed;
 
-        std.debug.print("simulation: compute pipeline created\n", .{});
+        std.debug.print("simulation: compute pipeline created (Moore neighborhood, birth={d}-{d} survival={d}-{d})\n", .{
+            birth_min, birth_max, survival_min, survival_max,
+        });
 
         return Simulation{
             .device = device,
             .pipeline = pipeline,
             .bgl = bgl,
             .params_buf = params_buf,
+            .birth_min = birth_min,
+            .birth_max = birth_max,
+            .survival_min = survival_min,
+            .survival_max = survival_max,
         };
     }
 
@@ -167,6 +207,10 @@ pub const Simulation = struct {
             .height = grid.height,
             .depth = grid.depth,
             .floats_per_cell = grid.floats_per_cell,
+            .birth_min = self.birth_min,
+            .birth_max = self.birth_max,
+            .survival_min = self.survival_min,
+            .survival_max = self.survival_max,
         };
         c.wgpuQueueWriteBuffer(queue, self.params_buf, 0, &params, @sizeOf(Params));
 

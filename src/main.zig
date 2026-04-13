@@ -94,12 +94,12 @@ pub fn main() !void {
     const seed_data = [_]f32{ 1.0, 0.0, 1.0, 1.0, 1.0 };
     grid.seedCenter(&seed_data);
 
-    // Create simulation
-    var sim = try Simulation.init(gpu.device, &grid);
+    // Create simulation with organic blob rule set (birth 5-7, survival 5-6)
+    var sim = try Simulation.init(gpu.device, &grid, 5, 7, 5, 6);
     defer sim.deinit();
 
-    // Run 5 simulation steps so there's visible structure
-    for (0..5) |i| {
+    // Run 10 simulation steps so there's visible structure
+    for (0..10) |i| {
         sim.step(&grid);
         std.debug.print("simulation: step {d} done\n", .{i + 1});
     }
