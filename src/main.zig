@@ -1,6 +1,7 @@
 const std = @import("std");
 const glfw = @import("glfw");
 const Gpu = @import("gpu.zig").Gpu;
+const compute_test = @import("compute_test.zig");
 
 const objc = @cImport({
     @cInclude("objc/message.h");
@@ -82,6 +83,8 @@ pub fn main() !void {
     defer gpu.deinit();
 
     std.debug.print("morphogen: GPU initialized, rendering...\n", .{});
+
+    try compute_test.run(gpu.device, gpu.queue, gpu.instance);
 
     var frame_count: u64 = 0;
 
