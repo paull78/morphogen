@@ -8,9 +8,11 @@ pub const Input = struct {
     last_x: f64,
     last_y: f64,
     paused: bool,
-    should_reset: bool,
+    should_step: bool,
+    should_reset_sim: bool,
     space_was_pressed: bool,
     r_was_pressed: bool,
+    n_was_pressed: bool,
 
     pub fn init(camera: *Camera) Input {
         return .{
@@ -18,10 +20,12 @@ pub const Input = struct {
             .dragging = false,
             .last_x = 0,
             .last_y = 0,
-            .paused = false,
-            .should_reset = false,
+            .paused = true, // start paused so the seed is visible
+            .should_step = false,
+            .should_reset_sim = false,
             .space_was_pressed = false,
             .r_was_pressed = false,
+            .n_was_pressed = false,
         };
     }
 
@@ -62,12 +66,23 @@ pub const Input = struct {
         }
         self.space_was_pressed = space_pressed;
 
-        // R: reset camera (rising edge)
+        // R: reset simulation (rising edge)
         const r_pressed = window.getKey(.r) == .press;
         if (r_pressed and !self.r_was_pressed) {
-            self.should_reset = true;
+            self.should_reset_sim = true;
         }
         self.r_was_pressed = r_pressed;
+
+        // N or Right arrow: single step when paused (rising edge)
+        const n_pressed = window.getKey(.n) == .press;
+        const right_pressed = window.getKey(.right) == .press;
+        if ((n_pressed and !self.n_was_pressed) and self.paused) {
+            self.should_step = true;
+        }
+        if (right_pressed and self.paused) {
+            self.should_step = true;
+        }
+        self.n_was_pressed = n_pressed;
 
         // Escape: close window
         if (window.getKey(.escape) == .press) {

@@ -87,40 +87,52 @@ pub fn main() !void {
 
     std.debug.print("morphogen: GPU initialized, rendering...\n", .{});
 
-    // Create grid: 32x32x32, 5 floats/cell
-    var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 32, 32, 32, 5);
+    // Create grid: 64x64x64, 5 floats/cell
+    var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 64, 64, 64, 5);
     defer grid.deinit();
 
     const seed_data = [_]f32{ 1.0, 0.0, 1.0, 1.0, 1.0 };
     grid.seedCenter(&seed_data);
 
-    // Create simulation with organic blob rule set (birth 5-7, survival 5-6)
+    // Simulation: organic blob rule set (birth 5-7, survival 5-6)
     var sim = try Simulation.init(gpu.device, &grid, 5, 7, 5, 6);
     defer sim.deinit();
-
-    // Run 10 simulation steps so there's visible structure
-    for (0..10) |i| {
-        sim.step(&grid);
-        std.debug.print("simulation: step {d} done\n", .{i + 1});
-    }
 
     // Set up orbit camera and input handling
     var camera = Camera.init();
     var input = Input.init(&camera);
     input.setupCallbacks(window);
 
-    var frame_count: u64 = 0;
+    var sim_step: u32 = 0;
+
+    std.debug.print("controls: Space=pause/resume  N/Right=step  R=reset  Escape=quit\n", .{});
+    std.debug.print("simulation: starting paused at step 0 (seed visible)\n", .{});
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
         input.update(window);
 
-        // Handle camera reset
-        if (input.should_reset) {
-            camera = Camera.init();
-            input.should_reset = false;
+        // Handle simulation reset: clear grid, re-seed, restart
+        if (input.should_reset_sim) {
+            grid.clear();
+            grid.seedCenter(&seed_data);
+            sim_step = 0;
+            input.should_reset_sim = false;
+            input.paused = true;
+            std.debug.print("simulation: reset to step 0\n", .{});
         }
 
+        // Run one simulation step if unpaused or single-stepping
+        if (!input.paused or input.should_step) {
+            sim.step(&grid);
+            sim_step += 1;
+            input.should_step = false;
+            if (sim_step % 10 == 0 or input.paused) {
+                std.debug.print("simulation: step {d}\n", .{sim_step});
+            }
+        }
+
+        // Handle resize
         const size = window.getFramebufferSize();
         if (size.width != gpu.surface_config.width or size.height != gpu.surface_config.height) {
             if (size.width > 0 and size.height > 0) {
@@ -130,8 +142,7 @@ pub fn main() !void {
 
         const camera_data = camera.buildUniformData(size.width, size.height);
         gpu.renderFrameWithGrid(&grid, &camera_data);
-        frame_count += 1;
     }
 
-    std.debug.print("morphogen: {d} frames rendered, goodbye\n", .{frame_count});
+    std.debug.print("morphogen: {d} simulation steps, goodbye\n", .{sim_step});
 }

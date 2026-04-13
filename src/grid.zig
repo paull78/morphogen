@@ -80,6 +80,21 @@ pub const Grid = struct {
         return (@as(u64, z) * self.height * self.width + @as(u64, y) * self.width + x) * self.floats_per_cell;
     }
 
+    /// Zero out both buffers and reset to initial state (no seed).
+    pub fn clear(self: *Grid) void {
+        const chunk_size = 4096;
+        const zeros = std.mem.zeroes([chunk_size]u8);
+        var offset: u64 = 0;
+        while (offset < self.buffer_size) {
+            const remaining = self.buffer_size - offset;
+            const write_size = @min(remaining, chunk_size);
+            c.wgpuQueueWriteBuffer(self.queue, self.buffer_a, offset, &zeros, write_size);
+            c.wgpuQueueWriteBuffer(self.queue, self.buffer_b, offset, &zeros, write_size);
+            offset += write_size;
+        }
+        self.current_is_a = true;
+    }
+
     pub fn seedCenter(self: *Grid, cell_data: []const f32) void {
         const cx = self.width / 2;
         const cy = self.height / 2;
