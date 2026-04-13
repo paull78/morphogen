@@ -69,20 +69,18 @@ pub const Gpu = struct {
 
         const adapter_callback_info = c.WGPURequestAdapterCallbackInfo{
             .nextInChain = null,
-            .mode = c.WGPUCallbackMode_WaitAnyOnly,
+            .mode = c.WGPUCallbackMode_AllowProcessEvents,
             .callback = &adapterCallback,
             .userdata1 = @ptrCast(&adapter_result),
             .userdata2 = @ptrCast(&adapter_request_done),
         };
 
-        const adapter_future = c.wgpuInstanceRequestAdapter(instance, &adapter_opts, adapter_callback_info);
+        _ = c.wgpuInstanceRequestAdapter(instance, &adapter_opts, adapter_callback_info);
 
-        // Wait for the adapter request to complete
-        var wait_info = c.WGPUFutureWaitInfo{
-            .future = adapter_future,
-            .completed = 0,
-        };
-        _ = c.wgpuInstanceWaitAny(instance, 1, &wait_info, std.math.maxInt(u64));
+        // Poll until the callback fires
+        while (!adapter_request_done) {
+            c.wgpuInstanceProcessEvents(instance);
+        }
 
         if (adapter_result == null) {
             std.debug.print("Failed to get WGPUAdapter\n", .{});
@@ -98,19 +96,18 @@ pub const Gpu = struct {
 
         const device_callback_info = c.WGPURequestDeviceCallbackInfo{
             .nextInChain = null,
-            .mode = c.WGPUCallbackMode_WaitAnyOnly,
+            .mode = c.WGPUCallbackMode_AllowProcessEvents,
             .callback = &deviceCallback,
             .userdata1 = @ptrCast(&device_result),
             .userdata2 = @ptrCast(&device_request_done),
         };
 
-        const device_future = c.wgpuAdapterRequestDevice(adapter_result, &device_desc, device_callback_info);
+        _ = c.wgpuAdapterRequestDevice(adapter_result, &device_desc, device_callback_info);
 
-        var dev_wait_info = c.WGPUFutureWaitInfo{
-            .future = device_future,
-            .completed = 0,
-        };
-        _ = c.wgpuInstanceWaitAny(instance, 1, &dev_wait_info, std.math.maxInt(u64));
+        // Poll until the callback fires
+        while (!device_request_done) {
+            c.wgpuInstanceProcessEvents(instance);
+        }
 
         if (device_result == null) {
             std.debug.print("Failed to get WGPUDevice\n", .{});
