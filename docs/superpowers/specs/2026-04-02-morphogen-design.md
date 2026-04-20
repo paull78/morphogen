@@ -42,10 +42,10 @@ This is a learning project. Development is organized as small incremental steps,
 
 ### Signal & Branching (Phase 2)
 
-12. **Signal diffusion** — add signal channel, place a source, visualize signal field as faint color overlay. Verify diffusion spreads correctly.
-13. **Growth tips + chemotaxis** — growth tips follow signal gradient. See a single tendril grow toward the source.
-14. **Branching** — add branching logic, see tree-like structures emerge. Color by cell type.
-15. **Interactive signals** — place/move signal sources with mouse. Watch growth respond in real time.
+12. ~~**Signal diffusion** — add signal channel, place a source, visualize signal field as faint color overlay. Verify diffusion spreads correctly.~~ ✅
+13. ~~**Growth tips + chemotaxis** — growth tips follow signal gradient. See a single tendril grow toward the source.~~ ✅
+14. ~~**Branching** — add branching logic, see tree-like structures emerge. Color by cell type.~~ ✅
+15. ~~**Interactive signals** — place/move signal sources with mouse. Watch growth respond in real time.~~ ✅
 
 ### NCA Inference (Phase 3)
 

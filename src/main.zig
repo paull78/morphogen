@@ -143,7 +143,7 @@ pub fn main() !void {
         }
 
         // Run one simulation step every N frames (or single-step when paused)
-        const steps_per_second: u64 = 1;
+        const steps_per_second: u64 = 5;
         const frames_per_step: u64 = 60 / steps_per_second;
         if (input.should_step or (!input.paused and frame_count % frames_per_step == 0)) {
             sim.step(&grid);
