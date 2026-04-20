@@ -1,6 +1,14 @@
 const std = @import("std");
 const gpu_mod = @import("gpu.zig");
 
+fn mat4MulVec4(m: gpu_mod.Mat4, v: [4]f32) [4]f32 {
+    var r: [4]f32 = undefined;
+    for (0..4) |row| {
+        r[row] = m[row] * v[0] + m[4 + row] * v[1] + m[8 + row] * v[2] + m[12 + row] * v[3];
+    }
+    return r;
+}
+
 pub const Camera = struct {
     theta: f32, // horizontal angle (radians)
     phi: f32, // vertical angle (radians), clamped to avoid gimbal lock
@@ -35,6 +43,70 @@ pub const Camera = struct {
     pub fn zoom(self: *Camera, delta: f32) void {
         self.radius *= 1.0 - delta * 0.1;
         self.radius = std.math.clamp(self.radius, 0.5, 10.0);
+    }
+
+    pub fn clickToGridPos(self: *const Camera, click_x: f32, click_y: f32, win_w: u32, win_h: u32, grid_w: u32, grid_h: u32, grid_d: u32) ?[3]u32 {
+        const w = @as(f32, @floatFromInt(win_w));
+        const h = @as(f32, @floatFromInt(win_h));
+        const aspect = w / h;
+
+        const ndc_x = (click_x / w) * 2.0 - 1.0;
+        const ndc_y = -((click_y / h) * 2.0 - 1.0);
+
+        const view = gpu_mod.mat4LookAt(self.position(), self.target, .{ 0, 1, 0 });
+        const proj = gpu_mod.mat4Perspective(self.fov, aspect, 0.01, 100.0);
+        const view_proj = gpu_mod.mat4Mul(proj, view);
+        const inv_vp = gpu_mod.mat4Inverse(view_proj);
+
+        const near_clip = mat4MulVec4(inv_vp, .{ ndc_x, ndc_y, 0.0, 1.0 });
+        const far_clip = mat4MulVec4(inv_vp, .{ ndc_x, ndc_y, 1.0, 1.0 });
+
+        const ro = [3]f32{
+            near_clip[0] / near_clip[3],
+            near_clip[1] / near_clip[3],
+            near_clip[2] / near_clip[3],
+        };
+        const far_pt = [3]f32{
+            far_clip[0] / far_clip[3],
+            far_clip[1] / far_clip[3],
+            far_clip[2] / far_clip[3],
+        };
+
+        const rd = gpu_mod.vec3Normalize(.{
+            far_pt[0] - ro[0],
+            far_pt[1] - ro[1],
+            far_pt[2] - ro[2],
+        });
+
+        // Ray-AABB intersection with unit cube [0,1]^3
+        const inv_rd = [3]f32{ 1.0 / rd[0], 1.0 / rd[1], 1.0 / rd[2] };
+        const t1 = [3]f32{ -ro[0] * inv_rd[0], -ro[1] * inv_rd[1], -ro[2] * inv_rd[2] };
+        const t2 = [3]f32{ (1.0 - ro[0]) * inv_rd[0], (1.0 - ro[1]) * inv_rd[1], (1.0 - ro[2]) * inv_rd[2] };
+
+        const tmin = [3]f32{ @min(t1[0], t2[0]), @min(t1[1], t2[1]), @min(t1[2], t2[2]) };
+        const tmax = [3]f32{ @max(t1[0], t2[0]), @max(t1[1], t2[1]), @max(t1[2], t2[2]) };
+
+        const t_near = @max(tmin[0], @max(tmin[1], tmin[2]));
+        const t_far = @min(tmax[0], @min(tmax[1], tmax[2]));
+
+        if (t_near > t_far or t_far < 0.0) return null;
+
+        const t_hit = @max(t_near, 0.0) + 0.001;
+        const hit = [3]f32{
+            ro[0] + rd[0] * t_hit,
+            ro[1] + rd[1] * t_hit,
+            ro[2] + rd[2] * t_hit,
+        };
+
+        const gw = @as(f32, @floatFromInt(grid_w));
+        const gh = @as(f32, @floatFromInt(grid_h));
+        const gd = @as(f32, @floatFromInt(grid_d));
+
+        const vx = @as(u32, @intFromFloat(std.math.clamp(hit[0] * gw, 0.0, gw - 1.0)));
+        const vy = @as(u32, @intFromFloat(std.math.clamp(hit[1] * gh, 0.0, gh - 1.0)));
+        const vz = @as(u32, @intFromFloat(std.math.clamp(hit[2] * gd, 0.0, gd - 1.0)));
+
+        return .{ vx, vy, vz };
     }
 
     /// Build the 24-float camera uniform data for the shader.

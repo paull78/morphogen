@@ -193,7 +193,7 @@ fn vec3Dot(a: Vec3, b: Vec3) f32 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-fn vec3Normalize(v: Vec3) Vec3 {
+pub fn vec3Normalize(v: Vec3) Vec3 {
     const len = @sqrt(vec3Dot(v, v));
     if (len < 1e-12) return .{ 0, 0, 0 };
     return .{ v[0] / len, v[1] / len, v[2] / len };

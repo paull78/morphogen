@@ -135,56 +135,132 @@ const shader_src =
     \\    let agy = abs(gy);
     \\    let agz = abs(gz);
     \\
-    \\    var dx: i32 = 0;
-    \\    var dy: i32 = 0;
-    \\    var dz: i32 = 0;
+    \\    // Find primary and secondary gradient directions
+    \\    var dx1: i32 = 0; var dy1: i32 = 0; var dz1: i32 = 0;
+    \\    var dx2: i32 = 0; var dy2: i32 = 0; var dz2: i32 = 0;
+    \\    var strongest: f32 = 0.0;
+    \\    var second: f32 = 0.0;
     \\
     \\    if (agx >= agy && agx >= agz) {
-    \\        dx = select(-1, 1, gx > 0.0);
+    \\        dx1 = select(-1, 1, gx > 0.0);
+    \\        strongest = agx;
+    \\        if (agy >= agz) {
+    \\            dy2 = select(-1, 1, gy > 0.0);
+    \\            second = agy;
+    \\        } else {
+    \\            dz2 = select(-1, 1, gz > 0.0);
+    \\            second = agz;
+    \\        }
     \\    } else if (agy >= agx && agy >= agz) {
-    \\        dy = select(-1, 1, gy > 0.0);
+    \\        dy1 = select(-1, 1, gy > 0.0);
+    \\        strongest = agy;
+    \\        if (agx >= agz) {
+    \\            dx2 = select(-1, 1, gx > 0.0);
+    \\            second = agx;
+    \\        } else {
+    \\            dz2 = select(-1, 1, gz > 0.0);
+    \\            second = agz;
+    \\        }
     \\    } else {
-    \\        dz = select(-1, 1, gz > 0.0);
-    \\    }
-    \\
-    \\    // 20% stochastic deviation
-    \\    let rng = hash(x, y, z, params.step);
-    \\    if (rng < 0.2) {
-    \\        let dir_idx = u32(rng * 30.0) % 6u;
-    \\        dx = 0; dy = 0; dz = 0;
-    \\        switch (dir_idx) {
-    \\            0u: { dx = 1; }
-    \\            1u: { dx = -1; }
-    \\            2u: { dy = 1; }
-    \\            3u: { dy = -1; }
-    \\            4u: { dz = 1; }
-    \\            default: { dz = -1; }
+    \\        dz1 = select(-1, 1, gz > 0.0);
+    \\        strongest = agz;
+    \\        if (agx >= agy) {
+    \\            dx2 = select(-1, 1, gx > 0.0);
+    \\            second = agx;
+    \\        } else {
+    \\            dy2 = select(-1, 1, gy > 0.0);
+    \\            second = agy;
     \\        }
     \\    }
     \\
-    \\    // Convert current cell to axon body (type=1, muted blue)
-    \\    grid_out[idx]     = 1.0;
-    \\    grid_out[idx + 1u] = grid_in[idx + 1u];
-    \\    grid_out[idx + 2u] = 0.15;
-    \\    grid_out[idx + 3u] = 0.3;
-    \\    grid_out[idx + 4u] = 0.6;
-    \\    grid_out[idx + 5u] = 1.0;
+    \\    // 20% stochastic deviation on primary direction
+    \\    let rng = hash(x, y, z, params.step);
+    \\    if (rng < 0.2) {
+    \\        let dir_idx = u32(rng * 30.0) % 6u;
+    \\        dx1 = 0; dy1 = 0; dz1 = 0;
+    \\        switch (dir_idx) {
+    \\            0u: { dx1 = 1; }
+    \\            1u: { dx1 = -1; }
+    \\            2u: { dy1 = 1; }
+    \\            3u: { dy1 = -1; }
+    \\            4u: { dz1 = 1; }
+    \\            default: { dz1 = -1; }
+    \\        }
+    \\    }
     \\
-    \\    // Place new growth tip at target
-    \\    let nx = ix + dx;
-    \\    let ny = iy + dy;
-    \\    let nz = iz + dz;
-    \\    if (nx >= 0 && nx < i32(params.width) &&
-    \\        ny >= 0 && ny < i32(params.height) &&
-    \\        nz >= 0 && nz < i32(params.depth)) {
-    \\        let nidx = cell_index(u32(nx), u32(ny), u32(nz));
-    \\        if (grid_in[nidx] < 0.5) {
-    \\            grid_out[nidx]     = 2.0;
-    \\            grid_out[nidx + 1u] = grid_in[nidx + 1u];
-    \\            grid_out[nidx + 2u] = 0.05;
-    \\            grid_out[nidx + 3u] = 0.9;
-    \\            grid_out[nidx + 4u] = 1.0;
-    \\            grid_out[nidx + 5u] = 1.0;
+    \\    // Branch if gradient is ambiguous (second direction is close to strongest)
+    \\    let branch_threshold = 0.7;
+    \\    let should_branch = strongest > 0.001 && second / strongest > branch_threshold && rng > 0.4;
+    \\
+    \\    if (should_branch) {
+    \\        // Convert to branch point (type=3, white)
+    \\        grid_out[idx]     = 3.0;
+    \\        grid_out[idx + 1u] = grid_in[idx + 1u];
+    \\        grid_out[idx + 2u] = 0.8;
+    \\        grid_out[idx + 3u] = 0.8;
+    \\        grid_out[idx + 4u] = 0.9;
+    \\        grid_out[idx + 5u] = 1.0;
+    \\
+    \\        // Primary branch tip
+    \\        let nx1 = ix + dx1;
+    \\        let ny1 = iy + dy1;
+    \\        let nz1 = iz + dz1;
+    \\        if (nx1 >= 0 && nx1 < i32(params.width) &&
+    \\            ny1 >= 0 && ny1 < i32(params.height) &&
+    \\            nz1 >= 0 && nz1 < i32(params.depth)) {
+    \\            let nidx1 = cell_index(u32(nx1), u32(ny1), u32(nz1));
+    \\            if (grid_in[nidx1] < 0.5) {
+    \\                grid_out[nidx1]     = 2.0;
+    \\                grid_out[nidx1 + 1u] = grid_in[nidx1 + 1u];
+    \\                grid_out[nidx1 + 2u] = 0.05;
+    \\                grid_out[nidx1 + 3u] = 0.9;
+    \\                grid_out[nidx1 + 4u] = 1.0;
+    \\                grid_out[nidx1 + 5u] = 1.0;
+    \\            }
+    \\        }
+    \\
+    \\        // Secondary branch tip
+    \\        let nx2 = ix + dx2;
+    \\        let ny2 = iy + dy2;
+    \\        let nz2 = iz + dz2;
+    \\        if (nx2 >= 0 && nx2 < i32(params.width) &&
+    \\            ny2 >= 0 && ny2 < i32(params.height) &&
+    \\            nz2 >= 0 && nz2 < i32(params.depth)) {
+    \\            let nidx2 = cell_index(u32(nx2), u32(ny2), u32(nz2));
+    \\            if (grid_in[nidx2] < 0.5) {
+    \\                grid_out[nidx2]     = 2.0;
+    \\                grid_out[nidx2 + 1u] = grid_in[nidx2 + 1u];
+    \\                grid_out[nidx2 + 2u] = 0.05;
+    \\                grid_out[nidx2 + 3u] = 0.9;
+    \\                grid_out[nidx2 + 4u] = 1.0;
+    \\                grid_out[nidx2 + 5u] = 1.0;
+    \\            }
+    \\        }
+    \\    } else {
+    \\        // Single advance: convert to axon body (type=1, muted blue)
+    \\        grid_out[idx]     = 1.0;
+    \\        grid_out[idx + 1u] = grid_in[idx + 1u];
+    \\        grid_out[idx + 2u] = 0.15;
+    \\        grid_out[idx + 3u] = 0.3;
+    \\        grid_out[idx + 4u] = 0.6;
+    \\        grid_out[idx + 5u] = 1.0;
+    \\
+    \\        // Place new tip
+    \\        let nx = ix + dx1;
+    \\        let ny = iy + dy1;
+    \\        let nz = iz + dz1;
+    \\        if (nx >= 0 && nx < i32(params.width) &&
+    \\            ny >= 0 && ny < i32(params.height) &&
+    \\            nz >= 0 && nz < i32(params.depth)) {
+    \\            let nidx = cell_index(u32(nx), u32(ny), u32(nz));
+    \\            if (grid_in[nidx] < 0.5) {
+    \\                grid_out[nidx]     = 2.0;
+    \\                grid_out[nidx + 1u] = grid_in[nidx + 1u];
+    \\                grid_out[nidx + 2u] = 0.05;
+    \\                grid_out[nidx + 3u] = 0.9;
+    \\                grid_out[nidx + 4u] = 1.0;
+    \\                grid_out[nidx + 5u] = 1.0;
+    \\            }
     \\        }
     \\    }
     \\}
@@ -323,6 +399,13 @@ pub const Simulation = struct {
         bg_desc.entryCount = 3;
         bg_desc.entries = &bg_entries[0];
         return c.wgpuDeviceCreateBindGroup(self.device, &bg_desc);
+    }
+
+    pub fn setSource(self: *Simulation, x: u32, y: u32, z: u32) void {
+        self.source_x = x;
+        self.source_y = y;
+        self.source_z = z;
+        std.debug.print("simulation: signal source moved to ({d},{d},{d})\n", .{ x, y, z });
     }
 
     pub fn step(self: *Simulation, grid: *Grid) void {

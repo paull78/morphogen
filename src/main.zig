@@ -108,12 +108,29 @@ pub fn main() !void {
     var sim_step: u32 = 0;
     var frame_count: u64 = 0;
 
-    std.debug.print("controls: Space=pause/resume  N/Right=step  R=reset  Escape=quit\n", .{});
+    std.debug.print("controls: Space=pause/resume  N/Right=step  R=reset  Right-click=move signal  Escape=quit\n", .{});
     std.debug.print("simulation: starting paused at step 0 (seed visible)\n", .{});
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
         input.update(window);
+
+        // Handle signal source placement
+        if (input.should_place_signal) {
+            const fb = window.getFramebufferSize();
+            if (camera.clickToGridPos(
+                @floatCast(input.signal_click_x),
+                @floatCast(input.signal_click_y),
+                fb.width,
+                fb.height,
+                grid.width,
+                grid.height,
+                grid.depth,
+            )) |pos| {
+                sim.setSource(pos[0], pos[1], pos[2]);
+            }
+            input.should_place_signal = false;
+        }
 
         // Handle simulation reset: clear grid, re-seed, restart
         if (input.should_reset_sim) {

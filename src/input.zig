@@ -13,6 +13,9 @@ pub const Input = struct {
     space_was_pressed: bool,
     r_was_pressed: bool,
     n_was_pressed: bool,
+    should_place_signal: bool,
+    signal_click_x: f64,
+    signal_click_y: f64,
 
     pub fn init(camera: *Camera) Input {
         return .{
@@ -26,6 +29,9 @@ pub const Input = struct {
             .space_was_pressed = false,
             .r_was_pressed = false,
             .n_was_pressed = false,
+            .should_place_signal = false,
+            .signal_click_x = 0,
+            .signal_click_y = 0,
         };
     }
 
@@ -87,6 +93,14 @@ pub const Input = struct {
         // Escape: close window
         if (window.getKey(.escape) == .press) {
             window.setShouldClose(true);
+        }
+
+        // Right-click: place signal source
+        const right_button = window.getMouseButton(.right);
+        if (right_button == .press) {
+            self.should_place_signal = true;
+            self.signal_click_x = cursor_pos.xpos;
+            self.signal_click_y = cursor_pos.ypos;
         }
     }
 };
