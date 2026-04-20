@@ -7,14 +7,14 @@ const Params = extern struct {
     height: u32,
     depth: u32,
     floats_per_cell: u32,
+    source_x: u32,
+    source_y: u32,
+    source_z: u32,
+    step: u32,
     birth_min: u32,
     birth_max: u32,
     survival_min: u32,
     survival_max: u32,
-    step: u32,        // incremented each step, used as RNG seed
-    _pad0: u32 = 0,
-    _pad1: u32 = 0,
-    _pad2: u32 = 0,
 };
 
 const shader_src =
@@ -23,34 +23,36 @@ const shader_src =
     \\    height: u32,
     \\    depth: u32,
     \\    floats_per_cell: u32,
+    \\    source_x: u32,
+    \\    source_y: u32,
+    \\    source_z: u32,
+    \\    step: u32,
     \\    birth_min: u32,
     \\    birth_max: u32,
     \\    survival_min: u32,
     \\    survival_max: u32,
-    \\    step: u32,
-    \\    _pad0: u32,
-    \\    _pad1: u32,
-    \\    _pad2: u32,
     \\}
     \\
     \\@group(0) @binding(0) var<uniform> params: Params;
     \\@group(0) @binding(1) var<storage, read> grid_in: array<f32>;
     \\@group(0) @binding(2) var<storage, read_write> grid_out: array<f32>;
     \\
-    \\// Hash-based pseudo-random: returns 0.0..1.0
-    \\fn hash(x: u32, y: u32, z: u32, seed: u32) -> f32 {
-    \\    var h = x * 374761393u + y * 668265263u + z * 1274126177u + seed * 1103515245u;
-    \\    h = (h ^ (h >> 13u)) * 1274126177u;
-    \\    h = h ^ (h >> 16u);
-    \\    return f32(h & 0xFFFFu) / 65535.0;
-    \\}
-    \\
     \\fn cell_index(x: u32, y: u32, z: u32) -> u32 {
     \\    return (z * params.height * params.width + y * params.width + x) * params.floats_per_cell;
     \\}
     \\
+    \\fn get_signal(x: i32, y: i32, z: i32) -> f32 {
+    \\    if (x < 0 || x >= i32(params.width) ||
+    \\        y < 0 || y >= i32(params.height) ||
+    \\        z < 0 || z >= i32(params.depth)) {
+    \\        return 0.0;
+    \\    }
+    \\    let idx = cell_index(u32(x), u32(y), u32(z));
+    \\    return grid_in[idx + 1u];
+    \\}
+    \\
     \\@compute @workgroup_size(4, 4, 4)
-    \\fn main(@builtin(global_invocation_id) id: vec3u) {
+    \\fn diffuse_main(@builtin(global_invocation_id) id: vec3u) {
     \\    let x = id.x;
     \\    let y = id.y;
     \\    let z = id.z;
@@ -60,97 +62,57 @@ const shader_src =
     \\    }
     \\
     \\    let idx = cell_index(x, y, z);
-    \\    let alive = grid_in[idx] > 0.5;
-    \\    let rng = hash(x, y, z, params.step);
     \\
-    \\    // Count Moore neighborhood (26 neighbors)
-    \\    var count: u32 = 0;
-    \\    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
-    \\        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
-    \\            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
-    \\                if (dx == 0 && dy == 0 && dz == 0) { continue; }
-    \\                let nx = i32(x) + dx;
-    \\                let ny = i32(y) + dy;
-    \\                let nz = i32(z) + dz;
-    \\                if (nx >= 0 && nx < i32(params.width) &&
-    \\                    ny >= 0 && ny < i32(params.height) &&
-    \\                    nz >= 0 && nz < i32(params.depth)) {
-    \\                    if (grid_in[cell_index(u32(nx), u32(ny), u32(nz))] > 0.5) {
-    \\                        count = count + 1;
-    \\                    }
-    \\                }
-    \\            }
-    \\        }
+    \\    // Copy type (channel 0) and color (channels 2-5) unchanged
+    \\    grid_out[idx]     = grid_in[idx];
+    \\    grid_out[idx + 2u] = grid_in[idx + 2u];
+    \\    grid_out[idx + 3u] = grid_in[idx + 3u];
+    \\    grid_out[idx + 4u] = grid_in[idx + 4u];
+    \\    grid_out[idx + 5u] = grid_in[idx + 5u];
+    \\
+    \\    // Signal diffusion: 6-neighbor Von Neumann Laplacian
+    \\    let center = get_signal(i32(x), i32(y), i32(z));
+    \\    let sum_neighbors =
+    \\        get_signal(i32(x) - 1, i32(y), i32(z)) +
+    \\        get_signal(i32(x) + 1, i32(y), i32(z)) +
+    \\        get_signal(i32(x), i32(y) - 1, i32(z)) +
+    \\        get_signal(i32(x), i32(y) + 1, i32(z)) +
+    \\        get_signal(i32(x), i32(y), i32(z) - 1) +
+    \\        get_signal(i32(x), i32(y), i32(z) + 1);
+    \\    let avg_neighbors = sum_neighbors / 6.0;
+    \\
+    \\    let D = 0.1;
+    \\    let decay = 0.01;
+    \\    var new_signal = center + D * (avg_neighbors - center) - decay * center;
+    \\    new_signal = clamp(new_signal, 0.0, 1.0);
+    \\
+    \\    // Inject signal at source position
+    \\    if (x == params.source_x && y == params.source_y && z == params.source_z) {
+    \\        new_signal = 1.0;
     \\    }
     \\
-    \\    // r channel stores age (incremented each step a cell survives)
-    \\    let age = grid_in[idx + 1];
-    \\
-    \\    if (alive) {
-    \\        if (count >= params.survival_min && count <= params.survival_max) {
-    \\            // Survive: increment age, color by age + neighbor pressure
-    \\            let new_age = min(age + 1.0, 50.0);
-    \\            let t = new_age / 50.0; // 0..1 over lifetime
-    \\            let pressure = f32(count) / 26.0; // how crowded
-    \\            grid_out[idx]     = 1.0;
-    \\            grid_out[idx + 1] = new_age;
-    \\            // Young: bright cyan. Old: muted teal. Crowded: warmer
-    \\            grid_out[idx + 2] = 0.1 + pressure * 0.3;
-    \\            grid_out[idx + 3] = 0.7 - t * 0.3;
-    \\            grid_out[idx + 4] = 0.9 - t * 0.4;
-    \\        } else {
-    \\            // Dying: stay visible as red for one frame (age = -1 sentinel)
-    \\            if (age >= 0.0) {
-    \\                grid_out[idx]     = 1.0;  // still "alive" visually
-    \\                grid_out[idx + 1] = -1.0; // sentinel: will be removed next step
-    \\                grid_out[idx + 2] = 0.8;  // red flash
-    \\                grid_out[idx + 3] = 0.1;
-    \\                grid_out[idx + 4] = 0.1;
-    \\            } else {
-    \\                // Was already flashing red — now actually die
-    \\                for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
-    \\                    grid_out[idx + i] = 0.0;
-    \\                }
-    \\            }
-    \\        }
-    \\    } else {
-    \\        if (count >= params.birth_min && count <= params.birth_max && rng < 0.5) {
-    \\            // Birth: bright cyan, age=0
-    \\            grid_out[idx]     = 1.0;
-    \\            grid_out[idx + 1] = 0.0;  // age = 0
-    \\            grid_out[idx + 2] = 0.05;
-    \\            grid_out[idx + 3] = 0.9;
-    \\            grid_out[idx + 4] = 1.0;
-    \\        } else {
-    \\            // Stay dead
-    \\            for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
-    \\                grid_out[idx + i] = 0.0;
-    \\            }
-    \\        }
-    \\    }
+    \\    grid_out[idx + 1u] = new_signal;
     \\}
 ;
 
 pub const Simulation = struct {
     device: c.WGPUDevice,
-    pipeline: c.WGPUComputePipeline,
+    diffuse_pipeline: c.WGPUComputePipeline,
     bgl: c.WGPUBindGroupLayout,
     params_buf: c.WGPUBuffer,
-    birth_min: u32,
-    birth_max: u32,
-    survival_min: u32,
-    survival_max: u32,
+    source_x: u32,
+    source_y: u32,
+    source_z: u32,
     step_count: u32,
 
     pub fn init(
         device: c.WGPUDevice,
         grid: *const Grid,
-        birth_min: u32,
-        birth_max: u32,
-        survival_min: u32,
-        survival_max: u32,
+        source_x: u32,
+        source_y: u32,
+        source_z: u32,
     ) !Simulation {
-        // Params uniform buffer (32 bytes)
+        // Params uniform buffer (48 bytes)
         var params_desc = std.mem.zeroes(c.WGPUBufferDescriptor);
         params_desc.label = c.WGPUStringView{ .data = "sim_params", .length = 10 };
         params_desc.size = @sizeOf(Params);
@@ -168,7 +130,7 @@ pub const Simulation = struct {
             return error.ShaderCreateFailed;
         defer c.wgpuShaderModuleRelease(shader_module);
 
-        // Bind group layout: binding 0 = uniform, 1 = read-only storage, 2 = storage
+        // Bind group layout: binding 0 = uniform, 1 = read-only storage, 2 = read_write storage
         var bgl_entries: [3]c.WGPUBindGroupLayoutEntry = undefined;
 
         bgl_entries[0] = std.mem.zeroes(c.WGPUBindGroupLayoutEntry);
@@ -203,56 +165,37 @@ pub const Simulation = struct {
             return error.PipelineLayoutFailed;
         defer c.wgpuPipelineLayoutRelease(pipeline_layout);
 
-        // Compute pipeline
+        // Compute pipeline with diffuse_main entry point
         var cp_desc = std.mem.zeroes(c.WGPUComputePipelineDescriptor);
         cp_desc.layout = pipeline_layout;
         cp_desc.compute.module = shader_module;
-        cp_desc.compute.entryPoint = c.WGPUStringView{ .data = "main", .length = 4 };
-        const pipeline = c.wgpuDeviceCreateComputePipeline(device, &cp_desc) orelse
+        cp_desc.compute.entryPoint = c.WGPUStringView{ .data = "diffuse_main", .length = 12 };
+        const diffuse_pipeline = c.wgpuDeviceCreateComputePipeline(device, &cp_desc) orelse
             return error.ComputePipelineFailed;
 
-        std.debug.print("simulation: compute pipeline created (Moore neighborhood, birth={d}-{d} survival={d}-{d})\n", .{
-            birth_min, birth_max, survival_min, survival_max,
+        std.debug.print("simulation: diffuse pipeline created (source at {d},{d},{d})\n", .{
+            source_x, source_y, source_z,
         });
 
         return Simulation{
             .device = device,
-            .pipeline = pipeline,
+            .diffuse_pipeline = diffuse_pipeline,
             .bgl = bgl,
             .params_buf = params_buf,
-            .birth_min = birth_min,
-            .birth_max = birth_max,
-            .survival_min = survival_min,
-            .survival_max = survival_max,
+            .source_x = source_x,
+            .source_y = source_y,
+            .source_z = source_z,
             .step_count = 0,
         };
     }
 
     pub fn deinit(self: *Simulation) void {
-        c.wgpuComputePipelineRelease(self.pipeline);
+        c.wgpuComputePipelineRelease(self.diffuse_pipeline);
         c.wgpuBindGroupLayoutRelease(self.bgl);
         c.wgpuBufferRelease(self.params_buf);
     }
 
-    pub fn step(self: *Simulation, grid: *Grid) void {
-        const queue = c.wgpuDeviceGetQueue(self.device);
-
-        // Upload params
-        const params = Params{
-            .width = grid.width,
-            .height = grid.height,
-            .depth = grid.depth,
-            .floats_per_cell = grid.floats_per_cell,
-            .birth_min = self.birth_min,
-            .birth_max = self.birth_max,
-            .survival_min = self.survival_min,
-            .survival_max = self.survival_max,
-            .step = self.step_count,
-        };
-        self.step_count += 1;
-        c.wgpuQueueWriteBuffer(queue, self.params_buf, 0, &params, @sizeOf(Params));
-
-        // Create bind group (fresh each call, buffers may have swapped)
+    fn createBindGroup(self: *const Simulation, grid: *const Grid) c.WGPUBindGroup {
         var bg_entries: [3]c.WGPUBindGroupEntry = undefined;
 
         bg_entries[0] = std.mem.zeroes(c.WGPUBindGroupEntry);
@@ -274,13 +217,38 @@ pub const Simulation = struct {
         bg_desc.layout = self.bgl;
         bg_desc.entryCount = 3;
         bg_desc.entries = &bg_entries[0];
-        const bind_group = c.wgpuDeviceCreateBindGroup(self.device, &bg_desc);
+        return c.wgpuDeviceCreateBindGroup(self.device, &bg_desc);
+    }
+
+    pub fn step(self: *Simulation, grid: *Grid) void {
+        const queue = c.wgpuDeviceGetQueue(self.device);
+
+        // Upload params
+        const params = Params{
+            .width = grid.width,
+            .height = grid.height,
+            .depth = grid.depth,
+            .floats_per_cell = grid.floats_per_cell,
+            .source_x = self.source_x,
+            .source_y = self.source_y,
+            .source_z = self.source_z,
+            .step = self.step_count,
+            .birth_min = 0,
+            .birth_max = 0,
+            .survival_min = 0,
+            .survival_max = 0,
+        };
+        self.step_count += 1;
+        c.wgpuQueueWriteBuffer(queue, self.params_buf, 0, &params, @sizeOf(Params));
+
+        // Create bind group (fresh each call, buffers may have swapped)
+        const bind_group = self.createBindGroup(grid);
         defer c.wgpuBindGroupRelease(bind_group);
 
         // Dispatch
         const encoder = c.wgpuDeviceCreateCommandEncoder(self.device, null);
         const compute_pass = c.wgpuCommandEncoderBeginComputePass(encoder, null);
-        c.wgpuComputePassEncoderSetPipeline(compute_pass, self.pipeline);
+        c.wgpuComputePassEncoderSetPipeline(compute_pass, self.diffuse_pipeline);
         c.wgpuComputePassEncoderSetBindGroup(compute_pass, 0, bind_group, 0, null);
 
         const wx = (grid.width + 3) / 4;

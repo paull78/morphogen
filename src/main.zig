@@ -51,33 +51,6 @@ fn createMetalLayer(ns_window: *anyopaque) ?*anyopaque {
     return metal_layer;
 }
 
-fn seedBlock(grid: *Grid, cell_data: []const f32) void {
-    const cx = grid.width / 2;
-    const cy = grid.height / 2;
-    const cz = grid.depth / 2;
-    var iz: u32 = 0;
-    while (iz < 3) : (iz += 1) {
-        var iy: u32 = 0;
-        while (iy < 3) : (iy += 1) {
-            var ix: u32 = 0;
-            while (ix < 3) : (ix += 1) {
-                const x = cx - 1 + ix;
-                const y = cy - 1 + iy;
-                const z = cz - 1 + iz;
-                const offset = grid.cellIndex(x, y, z) * @sizeOf(f32);
-                const c = @import("gpu.zig").c;
-                c.wgpuQueueWriteBuffer(
-                    grid.queue,
-                    grid.readBuffer(),
-                    offset,
-                    cell_data.ptr,
-                    cell_data.len * @sizeOf(f32),
-                );
-            }
-        }
-    }
-    std.debug.print("grid: seeded 3x3x3 block at center ({d},{d},{d})\n", .{ cx, cy, cz });
-}
 
 pub fn main() !void {
     // Initialize GLFW
@@ -115,18 +88,16 @@ pub fn main() !void {
 
     std.debug.print("morphogen: GPU initialized, rendering...\n", .{});
 
-    // Create grid: 64x64x64, 5 floats/cell
-    var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 64, 64, 64, 5);
+    // Create grid: 64x64x64, 6 floats/cell [type, signal, r, g, b, a]
+    var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 64, 64, 64, 6);
     defer grid.deinit();
 
-    // Seed a 3x3x3 block in the center (needed for higher birth thresholds)
-    const seed_cell = [_]f32{ 1.0, 0.0, 0.8, 0.9, 1.0 };
-    seedBlock(&grid, &seed_cell);
+    // Seed single growth tip at center: type=2, signal=0, bright cyan, full opacity
+    const seed_cell = [_]f32{ 2.0, 0.0, 0.05, 0.9, 1.0, 1.0 };
+    grid.seedCenter(&seed_cell);
 
-    // Rule: birth=3-4, survival=3-6 + stochastic 50%
-    // Stable core (3-6 is generous), selective birth (need 3-4 neighbors)
-    // Surface has active dynamics, interior is stable
-    var sim = try Simulation.init(gpu.device, &grid, 3, 4, 3, 6);
+    // Signal source above grid center at (32, 60, 32)
+    var sim = try Simulation.init(gpu.device, &grid, 32, 60, 32);
     defer sim.deinit();
 
     // Set up orbit camera and input handling
@@ -147,7 +118,7 @@ pub fn main() !void {
         // Handle simulation reset: clear grid, re-seed, restart
         if (input.should_reset_sim) {
             grid.clear();
-            seedBlock(&grid, &seed_cell);
+            grid.seedCenter(&seed_cell);
             sim_step = 0;
             input.should_reset_sim = false;
             input.paused = true;
@@ -162,12 +133,6 @@ pub fn main() !void {
             sim_step += 1;
             input.should_step = false;
             std.debug.print("simulation: step {d}\n", .{sim_step});
-
-            // Auto-pause near grid boundary to avoid flickering
-            if (sim_step >= grid.width / 2 - 2) {
-                input.paused = true;
-                std.debug.print("simulation: auto-paused (reached boundary)\n", .{});
-            }
         }
 
         // Handle resize
