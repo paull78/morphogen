@@ -179,11 +179,11 @@ const shader_src =
     \\        let dir_idx = u32(rng * 30.0) % 6u;
     \\        dx1 = 0; dy1 = 0; dz1 = 0;
     \\        switch (dir_idx) {
-    \\            0u: { dx1 = 1; }
-    \\            1u: { dx1 = -1; }
-    \\            2u: { dy1 = 1; }
-    \\            3u: { dy1 = -1; }
-    \\            4u: { dz1 = 1; }
+    \\            case 0u: { dx1 = 1; }
+    \\            case 1u: { dx1 = -1; }
+    \\            case 2u: { dy1 = 1; }
+    \\            case 3u: { dy1 = -1; }
+    \\            case 4u: { dz1 = 1; }
     \\            default: { dz1 = -1; }
     \\        }
     \\    }
