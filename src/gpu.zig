@@ -33,57 +33,24 @@ const wgsl_shader =
     \\    return vec4f(pos[idx], 0.0, 1.0);
     \\}
     \\
-    \\fn cell_index(x: u32, y: u32, z: u32) -> u32 {
-    \\    return (z * grid_params.grid_size.y * grid_params.grid_size.x
-    \\          + y * grid_params.grid_size.x + x) * grid_params.floats_per_cell;
+    \\fn cell_index(x: i32, y: i32, z: i32) -> u32 {
+    \\    return u32(z * i32(grid_params.grid_size.y) * i32(grid_params.grid_size.x)
+    \\            + y * i32(grid_params.grid_size.x) + x) * grid_params.floats_per_cell;
     \\}
     \\
-    \\fn sample_grid(pos: vec3f) -> vec4f {
-    \\    // pos is in [0,1]^3, convert to grid coords
-    \\    let gs = vec3f(f32(grid_params.grid_size.x), f32(grid_params.grid_size.y), f32(grid_params.grid_size.z));
-    \\    let gc = pos * gs;
-    \\    let ix = u32(floor(gc.x));
-    \\    let iy = u32(floor(gc.y));
-    \\    let iz = u32(floor(gc.z));
-    \\    if (ix >= grid_params.grid_size.x || iy >= grid_params.grid_size.y || iz >= grid_params.grid_size.z) {
-    \\        return vec4f(0.0);
+    \\fn is_alive(x: i32, y: i32, z: i32) -> bool {
+    \\    if (x < 0 || y < 0 || z < 0 ||
+    \\        x >= i32(grid_params.grid_size.x) ||
+    \\        y >= i32(grid_params.grid_size.y) ||
+    \\        z >= i32(grid_params.grid_size.z)) {
+    \\        return false;
     \\    }
-    \\    let idx = cell_index(ix, iy, iz);
-    \\    let alive = grid_data[idx];
-    \\    if (alive < 0.5) {
-    \\        return vec4f(0.0);
-    \\    }
-    \\    let r = grid_data[idx + 1];
-    \\    let g = grid_data[idx + 2];
-    \\    let b = grid_data[idx + 3];
-    \\    let a = grid_data[idx + 4];
-    \\    return vec4f(r, g, b, a);
+    \\    return grid_data[cell_index(x, y, z)] > 0.5;
     \\}
     \\
-    \\fn sample_alive(pos: vec3f) -> f32 {
-    \\    let gs = vec3f(f32(grid_params.grid_size.x), f32(grid_params.grid_size.y), f32(grid_params.grid_size.z));
-    \\    let gc = pos * gs;
-    \\    let ix = u32(floor(gc.x));
-    \\    let iy = u32(floor(gc.y));
-    \\    let iz = u32(floor(gc.z));
-    \\    if (ix >= grid_params.grid_size.x || iy >= grid_params.grid_size.y || iz >= grid_params.grid_size.z) {
-    \\        return 0.0;
-    \\    }
-    \\    let idx = cell_index(ix, iy, iz);
-    \\    return grid_data[idx];
-    \\}
-    \\
-    \\fn estimate_normal(pos: vec3f) -> vec3f {
-    \\    let eps = 1.0 / max(f32(grid_params.grid_size.x), max(f32(grid_params.grid_size.y), f32(grid_params.grid_size.z)));
-    \\    let dx = sample_alive(pos + vec3f(eps, 0.0, 0.0)) - sample_alive(pos - vec3f(eps, 0.0, 0.0));
-    \\    let dy = sample_alive(pos + vec3f(0.0, eps, 0.0)) - sample_alive(pos - vec3f(0.0, eps, 0.0));
-    \\    let dz = sample_alive(pos + vec3f(0.0, 0.0, eps)) - sample_alive(pos - vec3f(0.0, 0.0, eps));
-    \\    let n = vec3f(dx, dy, dz);
-    \\    let len = length(n);
-    \\    if (len < 0.001) {
-    \\        return vec3f(0.0, 1.0, 0.0);
-    \\    }
-    \\    return n / len;
+    \\fn get_cell_color(x: i32, y: i32, z: i32) -> vec3f {
+    \\    let idx = cell_index(x, y, z);
+    \\    return vec3f(grid_data[idx + 2], grid_data[idx + 3], grid_data[idx + 4]);
     \\}
     \\
     \\fn ray_aabb(ro: vec3f, rd: vec3f, box_min: vec3f, box_max: vec3f) -> vec2f {
@@ -99,9 +66,7 @@ const wgsl_shader =
     \\
     \\@fragment
     \\fn fs_main(@builtin(position) frag_pos: vec4f) -> @location(0) vec4f {
-    \\    // Reconstruct ray from pixel coordinates
     \\    let uv = (frag_pos.xy / camera.resolution) * 2.0 - 1.0;
-    \\    // Flip Y for correct orientation
     \\    let ndc = vec4f(uv.x, -uv.y, 0.0, 1.0);
     \\    let ndc_far = vec4f(uv.x, -uv.y, 1.0, 1.0);
     \\
@@ -113,60 +78,77 @@ const wgsl_shader =
     \\    let ro = world_near.xyz;
     \\    let rd = normalize(world_far.xyz - world_near.xyz);
     \\
-    \\    // Ray-AABB for unit cube [0,1]^3
+    \\    // Background
+    \\    let bg_t = frag_pos.y / camera.resolution.y;
+    \\    let bg = vec3f(0.02, 0.02, 0.05 + bg_t * 0.08);
+    \\
+    \\    // Ray-AABB for grid bounds [0,1]^3
     \\    let hit = ray_aabb(ro, rd, vec3f(0.0), vec3f(1.0));
     \\    if (hit.x > hit.y || hit.y < 0.0) {
-    \\        // Background: dark gradient
-    \\        let bg_t = frag_pos.y / camera.resolution.y;
-    \\        return vec4f(0.02, 0.02, 0.05 + bg_t * 0.08, 1.0);
+    \\        return vec4f(bg, 1.0);
     \\    }
     \\
-    \\    let t_start = max(hit.x, 0.0);
-    \\    let t_end = hit.y;
+    \\    // Enter the grid: convert ray to grid-space (voxel coords)
+    \\    let gs = vec3f(f32(grid_params.grid_size.x), f32(grid_params.grid_size.y), f32(grid_params.grid_size.z));
+    \\    let t_start = max(hit.x, 0.0) + 0.0001;
+    \\    let entry = (ro + rd * t_start) * gs;
     \\
-    \\    // Step size: roughly 1 voxel
-    \\    let max_dim = f32(max(grid_params.grid_size.x, max(grid_params.grid_size.y, grid_params.grid_size.z)));
-    \\    let step_size = 1.0 / (max_dim * 1.5);
+    \\    // DDA voxel traversal
+    \\    var voxel = vec3i(floor(entry));
+    \\    let step_dir = vec3i(sign(rd));
+    \\    let delta_dist = abs(1.0 / rd); // t increment to cross one voxel in each axis
+    \\    // distance to next voxel boundary in each axis
+    \\    var side_dist = (vec3f(voxel) + max(vec3f(step_dir), vec3f(0.0)) - entry) / rd;
     \\
-    \\    // Light direction
     \\    let light_dir = normalize(vec3f(0.6, 1.0, 0.8));
-    \\    let ambient = 0.25;
+    \\    let ambient = 0.3;
+    \\    let voxel_opacity = 0.6; // transparency per voxel
     \\
-    \\    // Front-to-back compositing
+    \\    var face_normal = vec3f(0.0);
     \\    var accum_color = vec3f(0.0);
-    \\    var accum_alpha = 0.0;
-    \\    var t = t_start + step_size * 0.5;
+    \\    var accum_alpha: f32 = 0.0;
     \\
-    \\    for (var i = 0u; i < 512u; i = i + 1u) {
-    \\        if (t > t_end || accum_alpha > 0.95) {
+    \\    for (var i = 0u; i < 256u; i = i + 1u) {
+    \\        if (accum_alpha > 0.95) { break; }
+    \\
+    \\        // Check bounds
+    \\        if (voxel.x < 0 || voxel.y < 0 || voxel.z < 0 ||
+    \\            voxel.x >= i32(grid_params.grid_size.x) ||
+    \\            voxel.y >= i32(grid_params.grid_size.y) ||
+    \\            voxel.z >= i32(grid_params.grid_size.z)) {
     \\            break;
     \\        }
-    \\        let pos = ro + rd * t;
-    \\        let sample_val = sample_grid(pos);
-    \\        if (sample_val.a > 0.01) {
-    \\            // Compute lighting
-    \\            let normal = -estimate_normal(pos);
-    \\            let ndl = max(dot(normal, light_dir), 0.0);
+    \\
+    \\        // Check if this voxel is alive
+    \\        if (is_alive(voxel.x, voxel.y, voxel.z)) {
+    \\            let cell_color = get_cell_color(voxel.x, voxel.y, voxel.z);
+    \\            let ndl = max(dot(face_normal, light_dir), 0.0);
     \\            let lit = ambient + (1.0 - ambient) * ndl;
-    \\            let cell_color = sample_val.rgb * lit;
-    \\            let cell_alpha = sample_val.a * 0.8; // soften a bit
+    \\            let lit_color = cell_color * lit;
     \\
-    \\            // Front-to-back composite
-    \\            let w = cell_alpha * (1.0 - accum_alpha);
-    \\            accum_color = accum_color + cell_color * w;
-    \\            accum_alpha = accum_alpha + w;
+    \\            // Front-to-back compositing
+    \\            let w = voxel_opacity * (1.0 - accum_alpha);
+    \\            accum_color += lit_color * w;
+    \\            accum_alpha += w;
     \\        }
-    \\        t = t + step_size;
-    \\    }
     \\
-    \\    if (accum_alpha < 0.01) {
-    \\        let bg_t = frag_pos.y / camera.resolution.y;
-    \\        return vec4f(0.02, 0.02, 0.05 + bg_t * 0.08, 1.0);
+    \\        // Step to next voxel (DDA)
+    \\        if (side_dist.x < side_dist.y && side_dist.x < side_dist.z) {
+    \\            side_dist.x += delta_dist.x;
+    \\            voxel.x += step_dir.x;
+    \\            face_normal = vec3f(f32(-step_dir.x), 0.0, 0.0);
+    \\        } else if (side_dist.y < side_dist.z) {
+    \\            side_dist.y += delta_dist.y;
+    \\            voxel.y += step_dir.y;
+    \\            face_normal = vec3f(0.0, f32(-step_dir.y), 0.0);
+    \\        } else {
+    \\            side_dist.z += delta_dist.z;
+    \\            voxel.z += step_dir.z;
+    \\            face_normal = vec3f(0.0, 0.0, f32(-step_dir.z));
+    \\        }
     \\    }
     \\
     \\    // Blend with background
-    \\    let bg_t = frag_pos.y / camera.resolution.y;
-    \\    let bg = vec3f(0.02, 0.02, 0.05 + bg_t * 0.08);
     \\    let final_color = accum_color + bg * (1.0 - accum_alpha);
     \\    return vec4f(final_color, 1.0);
     \\}

@@ -11,6 +11,10 @@ const Params = extern struct {
     birth_max: u32,
     survival_min: u32,
     survival_max: u32,
+    step: u32,        // incremented each step, used as RNG seed
+    _pad0: u32 = 0,
+    _pad1: u32 = 0,
+    _pad2: u32 = 0,
 };
 
 const shader_src =
@@ -23,11 +27,23 @@ const shader_src =
     \\    birth_max: u32,
     \\    survival_min: u32,
     \\    survival_max: u32,
+    \\    step: u32,
+    \\    _pad0: u32,
+    \\    _pad1: u32,
+    \\    _pad2: u32,
     \\}
     \\
     \\@group(0) @binding(0) var<uniform> params: Params;
     \\@group(0) @binding(1) var<storage, read> grid_in: array<f32>;
     \\@group(0) @binding(2) var<storage, read_write> grid_out: array<f32>;
+    \\
+    \\// Hash-based pseudo-random: returns 0.0..1.0
+    \\fn hash(x: u32, y: u32, z: u32, seed: u32) -> f32 {
+    \\    var h = x * 374761393u + y * 668265263u + z * 1274126177u + seed * 1103515245u;
+    \\    h = (h ^ (h >> 13u)) * 1274126177u;
+    \\    h = h ^ (h >> 16u);
+    \\    return f32(h & 0xFFFFu) / 65535.0;
+    \\}
     \\
     \\fn cell_index(x: u32, y: u32, z: u32) -> u32 {
     \\    return (z * params.height * params.width + y * params.width + x) * params.floats_per_cell;
@@ -45,6 +61,7 @@ const shader_src =
     \\
     \\    let idx = cell_index(x, y, z);
     \\    let alive = grid_in[idx] > 0.5;
+    \\    let rng = hash(x, y, z, params.step);
     \\
     \\    // Count Moore neighborhood (26 neighbors)
     \\    var count: u32 = 0;
@@ -66,26 +83,43 @@ const shader_src =
     \\        }
     \\    }
     \\
+    \\    // r channel stores age (incremented each step a cell survives)
+    \\    let age = grid_in[idx + 1];
+    \\
     \\    if (alive) {
     \\        if (count >= params.survival_min && count <= params.survival_max) {
-    \\            // Survive: copy cell through
-    \\            for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
-    \\                grid_out[idx + i] = grid_in[idx + i];
-    \\            }
+    \\            // Survive: increment age, color by age + neighbor pressure
+    \\            let new_age = min(age + 1.0, 50.0);
+    \\            let t = new_age / 50.0; // 0..1 over lifetime
+    \\            let pressure = f32(count) / 26.0; // how crowded
+    \\            grid_out[idx]     = 1.0;
+    \\            grid_out[idx + 1] = new_age;
+    \\            // Young: bright cyan. Old: muted teal. Crowded: warmer
+    \\            grid_out[idx + 2] = 0.1 + pressure * 0.3;
+    \\            grid_out[idx + 3] = 0.7 - t * 0.3;
+    \\            grid_out[idx + 4] = 0.9 - t * 0.4;
     \\        } else {
-    \\            // Die: write zeros
-    \\            for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
-    \\                grid_out[idx + i] = 0.0;
+    \\            // Dying: stay visible as red for one frame (age = -1 sentinel)
+    \\            if (age >= 0.0) {
+    \\                grid_out[idx]     = 1.0;  // still "alive" visually
+    \\                grid_out[idx + 1] = -1.0; // sentinel: will be removed next step
+    \\                grid_out[idx + 2] = 0.8;  // red flash
+    \\                grid_out[idx + 3] = 0.1;
+    \\                grid_out[idx + 4] = 0.1;
+    \\            } else {
+    \\                // Was already flashing red — now actually die
+    \\                for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
+    \\                    grid_out[idx + i] = 0.0;
+    \\                }
     \\            }
     \\        }
     \\    } else {
-    \\        if (count >= params.birth_min && count <= params.birth_max) {
-    \\            // Birth: become alive with color based on neighbor count
-    \\            let intensity = f32(count) / 8.0;
+    \\        if (count >= params.birth_min && count <= params.birth_max && rng < 0.5) {
+    \\            // Birth: bright cyan, age=0
     \\            grid_out[idx]     = 1.0;
-    \\            grid_out[idx + 1] = 0.1;
-    \\            grid_out[idx + 2] = 0.3 + intensity * 0.5;
-    \\            grid_out[idx + 3] = 0.5 + intensity * 0.3;
+    \\            grid_out[idx + 1] = 0.0;  // age = 0
+    \\            grid_out[idx + 2] = 0.05;
+    \\            grid_out[idx + 3] = 0.9;
     \\            grid_out[idx + 4] = 1.0;
     \\        } else {
     \\            // Stay dead
@@ -106,6 +140,7 @@ pub const Simulation = struct {
     birth_max: u32,
     survival_min: u32,
     survival_max: u32,
+    step_count: u32,
 
     pub fn init(
         device: c.WGPUDevice,
@@ -189,6 +224,7 @@ pub const Simulation = struct {
             .birth_max = birth_max,
             .survival_min = survival_min,
             .survival_max = survival_max,
+            .step_count = 0,
         };
     }
 
@@ -211,7 +247,9 @@ pub const Simulation = struct {
             .birth_max = self.birth_max,
             .survival_min = self.survival_min,
             .survival_max = self.survival_max,
+            .step = self.step_count,
         };
+        self.step_count += 1;
         c.wgpuQueueWriteBuffer(queue, self.params_buf, 0, &params, @sizeOf(Params));
 
         // Create bind group (fresh each call, buffers may have swapped)
