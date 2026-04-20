@@ -93,11 +93,107 @@ const shader_src =
     \\
     \\    grid_out[idx + 1u] = new_signal;
     \\}
+    \\
+    \\fn hash(x: u32, y: u32, z: u32, seed: u32) -> f32 {
+    \\    var h = x * 374761393u + y * 668265263u + z * 1274126177u + seed * 1103515245u;
+    \\    h = (h ^ (h >> 13u)) * 1274126177u;
+    \\    h = h ^ (h >> 16u);
+    \\    return f32(h & 0xFFFFu) / 65535.0;
+    \\}
+    \\
+    \\@compute @workgroup_size(4, 4, 4)
+    \\fn growth_main(@builtin(global_invocation_id) id: vec3u) {
+    \\    let x = id.x;
+    \\    let y = id.y;
+    \\    let z = id.z;
+    \\
+    \\    if (x >= params.width || y >= params.height || z >= params.depth) {
+    \\        return;
+    \\    }
+    \\
+    \\    let idx = cell_index(x, y, z);
+    \\    let cell_type = grid_in[idx];
+    \\
+    \\    // Non-tip cells: copy through unchanged
+    \\    if (cell_type < 1.5 || cell_type > 2.5) {
+    \\        for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
+    \\            grid_out[idx + i] = grid_in[idx + i];
+    \\        }
+    \\        return;
+    \\    }
+    \\
+    \\    // Growth tip: compute signal gradient
+    \\    let ix = i32(x);
+    \\    let iy = i32(y);
+    \\    let iz = i32(z);
+    \\
+    \\    let gx = get_signal(ix+1, iy, iz) - get_signal(ix-1, iy, iz);
+    \\    let gy = get_signal(ix, iy+1, iz) - get_signal(ix, iy-1, iz);
+    \\    let gz = get_signal(ix, iy, iz+1) - get_signal(ix, iy, iz-1);
+    \\
+    \\    let agx = abs(gx);
+    \\    let agy = abs(gy);
+    \\    let agz = abs(gz);
+    \\
+    \\    var dx: i32 = 0;
+    \\    var dy: i32 = 0;
+    \\    var dz: i32 = 0;
+    \\
+    \\    if (agx >= agy && agx >= agz) {
+    \\        dx = select(-1, 1, gx > 0.0);
+    \\    } else if (agy >= agx && agy >= agz) {
+    \\        dy = select(-1, 1, gy > 0.0);
+    \\    } else {
+    \\        dz = select(-1, 1, gz > 0.0);
+    \\    }
+    \\
+    \\    // 20% stochastic deviation
+    \\    let rng = hash(x, y, z, params.step);
+    \\    if (rng < 0.2) {
+    \\        let dir_idx = u32(rng * 30.0) % 6u;
+    \\        dx = 0; dy = 0; dz = 0;
+    \\        switch (dir_idx) {
+    \\            0u: { dx = 1; }
+    \\            1u: { dx = -1; }
+    \\            2u: { dy = 1; }
+    \\            3u: { dy = -1; }
+    \\            4u: { dz = 1; }
+    \\            default: { dz = -1; }
+    \\        }
+    \\    }
+    \\
+    \\    // Convert current cell to axon body (type=1, muted blue)
+    \\    grid_out[idx]     = 1.0;
+    \\    grid_out[idx + 1u] = grid_in[idx + 1u];
+    \\    grid_out[idx + 2u] = 0.15;
+    \\    grid_out[idx + 3u] = 0.3;
+    \\    grid_out[idx + 4u] = 0.6;
+    \\    grid_out[idx + 5u] = 1.0;
+    \\
+    \\    // Place new growth tip at target
+    \\    let nx = ix + dx;
+    \\    let ny = iy + dy;
+    \\    let nz = iz + dz;
+    \\    if (nx >= 0 && nx < i32(params.width) &&
+    \\        ny >= 0 && ny < i32(params.height) &&
+    \\        nz >= 0 && nz < i32(params.depth)) {
+    \\        let nidx = cell_index(u32(nx), u32(ny), u32(nz));
+    \\        if (grid_in[nidx] < 0.5) {
+    \\            grid_out[nidx]     = 2.0;
+    \\            grid_out[nidx + 1u] = grid_in[nidx + 1u];
+    \\            grid_out[nidx + 2u] = 0.05;
+    \\            grid_out[nidx + 3u] = 0.9;
+    \\            grid_out[nidx + 4u] = 1.0;
+    \\            grid_out[nidx + 5u] = 1.0;
+    \\        }
+    \\    }
+    \\}
 ;
 
 pub const Simulation = struct {
     device: c.WGPUDevice,
     diffuse_pipeline: c.WGPUComputePipeline,
+    growth_pipeline: c.WGPUComputePipeline,
     bgl: c.WGPUBindGroupLayout,
     params_buf: c.WGPUBuffer,
     source_x: u32,
@@ -173,13 +269,21 @@ pub const Simulation = struct {
         const diffuse_pipeline = c.wgpuDeviceCreateComputePipeline(device, &cp_desc) orelse
             return error.ComputePipelineFailed;
 
-        std.debug.print("simulation: diffuse pipeline created (source at {d},{d},{d})\n", .{
+        var growth_cp_desc = std.mem.zeroes(c.WGPUComputePipelineDescriptor);
+        growth_cp_desc.layout = pipeline_layout;
+        growth_cp_desc.compute.module = shader_module;
+        growth_cp_desc.compute.entryPoint = c.WGPUStringView{ .data = "growth_main", .length = 11 };
+        const growth_pipeline = c.wgpuDeviceCreateComputePipeline(device, &growth_cp_desc) orelse
+            return error.ComputePipelineFailed;
+
+        std.debug.print("simulation: diffuse + growth pipelines created (source at {d},{d},{d})\n", .{
             source_x, source_y, source_z,
         });
 
         return Simulation{
             .device = device,
             .diffuse_pipeline = diffuse_pipeline,
+            .growth_pipeline = growth_pipeline,
             .bgl = bgl,
             .params_buf = params_buf,
             .source_x = source_x,
@@ -191,6 +295,7 @@ pub const Simulation = struct {
 
     pub fn deinit(self: *Simulation) void {
         c.wgpuComputePipelineRelease(self.diffuse_pipeline);
+        c.wgpuComputePipelineRelease(self.growth_pipeline);
         c.wgpuBindGroupLayoutRelease(self.bgl);
         c.wgpuBufferRelease(self.params_buf);
     }
@@ -223,7 +328,6 @@ pub const Simulation = struct {
     pub fn step(self: *Simulation, grid: *Grid) void {
         const queue = c.wgpuDeviceGetQueue(self.device);
 
-        // Upload params
         const params = Params{
             .width = grid.width,
             .height = grid.height,
@@ -241,28 +345,44 @@ pub const Simulation = struct {
         self.step_count += 1;
         c.wgpuQueueWriteBuffer(queue, self.params_buf, 0, &params, @sizeOf(Params));
 
-        // Create bind group (fresh each call, buffers may have swapped)
-        const bind_group = self.createBindGroup(grid);
-        defer c.wgpuBindGroupRelease(bind_group);
-
-        // Dispatch
-        const encoder = c.wgpuDeviceCreateCommandEncoder(self.device, null);
-        const compute_pass = c.wgpuCommandEncoderBeginComputePass(encoder, null);
-        c.wgpuComputePassEncoderSetPipeline(compute_pass, self.diffuse_pipeline);
-        c.wgpuComputePassEncoderSetBindGroup(compute_pass, 0, bind_group, 0, null);
-
         const wx = (grid.width + 3) / 4;
         const wy = (grid.height + 3) / 4;
         const wz = (grid.depth + 3) / 4;
-        c.wgpuComputePassEncoderDispatchWorkgroups(compute_pass, wx, wy, wz);
-        c.wgpuComputePassEncoderEnd(compute_pass);
-        c.wgpuComputePassEncoderRelease(compute_pass);
 
-        const cmd = c.wgpuCommandEncoderFinish(encoder, null);
-        c.wgpuCommandEncoderRelease(encoder);
-        c.wgpuQueueSubmit(queue, 1, &cmd);
-        c.wgpuCommandBufferRelease(cmd);
+        // Pass 1: Diffusion
+        {
+            const bg = self.createBindGroup(grid);
+            defer c.wgpuBindGroupRelease(bg);
+            const enc = c.wgpuDeviceCreateCommandEncoder(self.device, null);
+            const pass = c.wgpuCommandEncoderBeginComputePass(enc, null);
+            c.wgpuComputePassEncoderSetPipeline(pass, self.diffuse_pipeline);
+            c.wgpuComputePassEncoderSetBindGroup(pass, 0, bg, 0, null);
+            c.wgpuComputePassEncoderDispatchWorkgroups(pass, wx, wy, wz);
+            c.wgpuComputePassEncoderEnd(pass);
+            c.wgpuComputePassEncoderRelease(pass);
+            const cmd = c.wgpuCommandEncoderFinish(enc, null);
+            c.wgpuCommandEncoderRelease(enc);
+            c.wgpuQueueSubmit(queue, 1, &cmd);
+            c.wgpuCommandBufferRelease(cmd);
+        }
+        grid.swap();
 
+        // Pass 2: Growth
+        {
+            const bg = self.createBindGroup(grid);
+            defer c.wgpuBindGroupRelease(bg);
+            const enc = c.wgpuDeviceCreateCommandEncoder(self.device, null);
+            const pass = c.wgpuCommandEncoderBeginComputePass(enc, null);
+            c.wgpuComputePassEncoderSetPipeline(pass, self.growth_pipeline);
+            c.wgpuComputePassEncoderSetBindGroup(pass, 0, bg, 0, null);
+            c.wgpuComputePassEncoderDispatchWorkgroups(pass, wx, wy, wz);
+            c.wgpuComputePassEncoderEnd(pass);
+            c.wgpuComputePassEncoderRelease(pass);
+            const cmd = c.wgpuCommandEncoderFinish(enc, null);
+            c.wgpuCommandEncoderRelease(enc);
+            c.wgpuQueueSubmit(queue, 1, &cmd);
+            c.wgpuCommandBufferRelease(cmd);
+        }
         grid.swap();
     }
 };
