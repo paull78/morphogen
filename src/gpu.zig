@@ -38,14 +38,24 @@ const wgsl_shader =
     \\            + y * i32(grid_params.grid_size.x) + x) * grid_params.floats_per_cell;
     \\}
     \\
-    \\fn is_alive(x: i32, y: i32, z: i32) -> bool {
+    \\fn get_cell_type(x: i32, y: i32, z: i32) -> f32 {
     \\    if (x < 0 || y < 0 || z < 0 ||
     \\        x >= i32(grid_params.grid_size.x) ||
     \\        y >= i32(grid_params.grid_size.y) ||
     \\        z >= i32(grid_params.grid_size.z)) {
-    \\        return false;
+    \\        return 0.0;
     \\    }
-    \\    return grid_data[cell_index(x, y, z)] > 0.5;
+    \\    return grid_data[cell_index(x, y, z)];
+    \\}
+    \\
+    \\fn get_signal(x: i32, y: i32, z: i32) -> f32 {
+    \\    if (x < 0 || y < 0 || z < 0 ||
+    \\        x >= i32(grid_params.grid_size.x) ||
+    \\        y >= i32(grid_params.grid_size.y) ||
+    \\        z >= i32(grid_params.grid_size.z)) {
+    \\        return 0.0;
+    \\    }
+    \\    return grid_data[cell_index(x, y, z) + 1];
     \\}
     \\
     \\fn get_cell_color(x: i32, y: i32, z: i32) -> vec3f {
@@ -119,17 +129,25 @@ const wgsl_shader =
     \\            break;
     \\        }
     \\
-    \\        // Check if this voxel is alive
-    \\        if (is_alive(voxel.x, voxel.y, voxel.z)) {
+    \\        let cell_type = get_cell_type(voxel.x, voxel.y, voxel.z);
+    \\        if (cell_type > 0.5) {
     \\            let cell_color = get_cell_color(voxel.x, voxel.y, voxel.z);
     \\            let ndl = max(dot(face_normal, light_dir), 0.0);
     \\            let lit = ambient + (1.0 - ambient) * ndl;
     \\            let lit_color = cell_color * lit;
     \\
-    \\            // Front-to-back compositing
     \\            let w = voxel_opacity * (1.0 - accum_alpha);
     \\            accum_color += lit_color * w;
     \\            accum_alpha += w;
+    \\        } else {
+    \\            let sig = get_signal(voxel.x, voxel.y, voxel.z);
+    \\            if (sig > 0.01) {
+    \\                let glow_color = vec3f(0.2, 0.1, 0.4) * sig;
+    \\                let glow_opacity = sig * 0.08;
+    \\                let w = glow_opacity * (1.0 - accum_alpha);
+    \\                accum_color += glow_color * w;
+    \\                accum_alpha += w;
+    \\            }
     \\        }
     \\
     \\        // Step to next voxel (DDA)
