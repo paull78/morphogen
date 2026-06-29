@@ -101,6 +101,53 @@ const shader_src =
     \\    return f32(h & 0xFFFFu) / 65535.0;
     \\}
     \\
+    \\// Check if a cell is occupied (type > 0)
+    \\fn is_occupied(x: i32, y: i32, z: i32) -> f32 {
+    \\    if (x < 0 || x >= i32(params.width) ||
+    \\        y < 0 || y >= i32(params.height) ||
+    \\        z < 0 || z >= i32(params.depth)) {
+    \\        return 0.0;
+    \\    }
+    \\    let t = grid_in[cell_index(u32(x), u32(y), u32(z))];
+    \\    return select(0.0, 1.0, t > 0.5);
+    \\}
+    \\
+    \\// Count occupied cells in a radius-2 neighborhood (excluding self)
+    \\fn neighbor_density(x: i32, y: i32, z: i32) -> f32 {
+    \\    var count: f32 = 0.0;
+    \\    for (var dz: i32 = -2; dz <= 2; dz = dz + 1) {
+    \\        for (var dy: i32 = -2; dy <= 2; dy = dy + 1) {
+    \\            for (var dx: i32 = -2; dx <= 2; dx = dx + 1) {
+    \\                if (dx == 0 && dy == 0 && dz == 0) { continue; }
+    \\                count += is_occupied(x + dx, y + dy, z + dz);
+    \\            }
+    \\        }
+    \\    }
+    \\    return count;
+    \\}
+    \\
+    \\// Score a direction for a growth tip: prefer signal, avoid crowded areas
+    \\fn score_direction(x: i32, y: i32, z: i32, dx: i32, dy: i32, dz: i32) -> f32 {
+    \\    let nx = x + dx;
+    \\    let ny = y + dy;
+    \\    let nz = z + dz;
+    \\    // Out of bounds: very bad
+    \\    if (nx < 0 || nx >= i32(params.width) ||
+    \\        ny < 0 || ny >= i32(params.height) ||
+    \\        nz < 0 || nz >= i32(params.depth)) {
+    \\        return -100.0;
+    \\    }
+    \\    // Occupied: can't go there
+    \\    if (is_occupied(nx, ny, nz) > 0.5) {
+    \\        return -100.0;
+    \\    }
+    \\    // Signal pull: higher signal = better
+    \\    let sig = get_signal(nx, ny, nz);
+    \\    // Self-avoidance: penalize crowded directions
+    \\    let density = neighbor_density(nx, ny, nz);
+    \\    return sig * 3.0 - density * 0.08;
+    \\}
+    \\
     \\@compute @workgroup_size(4, 4, 4)
     \\fn growth_main(@builtin(global_invocation_id) id: vec3u) {
     \\    let x = id.x;
@@ -113,154 +160,150 @@ const shader_src =
     \\
     \\    let idx = cell_index(x, y, z);
     \\    let cell_type = grid_in[idx];
+    \\    let ix = i32(x);
+    \\    let iy = i32(y);
+    \\    let iz = i32(z);
+    \\    let rng = hash(x, y, z, params.step);
     \\
-    \\    // Non-tip cells: copy through unchanged
-    \\    if (cell_type < 1.5 || cell_type > 2.5) {
-    \\        for (var i: u32 = 0; i < params.floats_per_cell; i = i + 1) {
-    \\            grid_out[idx + i] = grid_in[idx + i];
+    \\    // --- Interstitial branching: axon bodies can sprout new tips ---
+    \\    if (cell_type > 0.5 && cell_type < 1.5) {
+    \\        // Very rare: 0.02% chance, only isolated surface cells
+    \\        let density = neighbor_density(ix, iy, iz);
+    \\        if (rng < 0.0002 && density < 5.0) {
+    \\            // Find an empty face-neighbor to sprout into
+    \\            let rng2 = hash(x + 3u, y + 5u, z + 7u, params.step);
+    \\            let start_dir = u32(rng2 * 6.0) % 6u;
+    \\            // Try all 6 directions starting from a random one
+    \\            for (var attempt: u32 = 0; attempt < 6u; attempt = attempt + 1) {
+    \\                let dir = (start_dir + attempt) % 6u;
+    \\                var sx: i32 = 0; var sy: i32 = 0; var sz: i32 = 0;
+    \\                switch (dir) {
+    \\                    case 0u: { sx = 1; }
+    \\                    case 1u: { sx = -1; }
+    \\                    case 2u: { sy = 1; }
+    \\                    case 3u: { sy = -1; }
+    \\                    case 4u: { sz = 1; }
+    \\                    default: { sz = -1; }
+    \\                }
+    \\                let snx = ix + sx;
+    \\                let sny = iy + sy;
+    \\                let snz = iz + sz;
+    \\                if (snx >= 0 && snx < i32(params.width) &&
+    \\                    sny >= 0 && sny < i32(params.height) &&
+    \\                    snz >= 0 && snz < i32(params.depth)) {
+    \\                    if (is_occupied(snx, sny, snz) < 0.5) {
+    \\                        // Sprout! Mark self as branch point, place new tip
+    \\                        grid_out[idx]     = 3.0;
+    \\                        grid_out[idx + 2u] = 1.0;
+    \\                        grid_out[idx + 3u] = 0.95;
+    \\                        grid_out[idx + 4u] = 0.7;
+    \\                        let nidx = cell_index(u32(snx), u32(sny), u32(snz));
+    \\                        grid_out[nidx]     = 2.0;
+    \\                        grid_out[nidx + 1u] = grid_in[nidx + 1u];
+    \\                        grid_out[nidx + 2u] = 0.05;
+    \\                        grid_out[nidx + 3u] = 0.9;
+    \\                        grid_out[nidx + 4u] = 1.0;
+    \\                        grid_out[nidx + 5u] = 1.0;
+    \\                        break;
+    \\                    }
+    \\                }
+    \\            }
     \\        }
     \\        return;
     \\    }
     \\
-    \\    // Growth tip: compute signal gradient
-    \\    let ix = i32(x);
-    \\    let iy = i32(y);
-    \\    let iz = i32(z);
+    \\    // Only growth tips (type=2) do the rest
+    \\    if (cell_type < 1.5 || cell_type > 2.5) {
+    \\        return;
+    \\    }
     \\
-    \\    let gx = get_signal(ix+1, iy, iz) - get_signal(ix-1, iy, iz);
-    \\    let gy = get_signal(ix, iy+1, iz) - get_signal(ix, iy-1, iz);
-    \\    let gz = get_signal(ix, iy, iz+1) - get_signal(ix, iy, iz-1);
-    \\
-    \\    let agx = abs(gx);
-    \\    let agy = abs(gy);
-    \\    let agz = abs(gz);
-    \\
-    \\    // Find primary and secondary gradient directions
-    \\    var dx1: i32 = 0; var dy1: i32 = 0; var dz1: i32 = 0;
-    \\    var dx2: i32 = 0; var dy2: i32 = 0; var dz2: i32 = 0;
-    \\    var strongest: f32 = 0.0;
-    \\    var second: f32 = 0.0;
-    \\
-    \\    if (agx >= agy && agx >= agz) {
-    \\        dx1 = select(-1, 1, gx > 0.0);
-    \\        strongest = agx;
-    \\        if (agy >= agz) {
-    \\            dy2 = select(-1, 1, gy > 0.0);
-    \\            second = agy;
-    \\        } else {
-    \\            dz2 = select(-1, 1, gz > 0.0);
-    \\            second = agz;
+    \\    // --- Growth tip: pick the best face-neighbor to advance into ---
+    \\    // score_direction prefers high signal (chemotaxis) and penalizes crowding;
+    \\    // out-of-bounds / occupied neighbors score -100. A small per-direction jitter
+    \\    // keeps tips wandering outward when the signal field is still flat, instead of
+    \\    // defaulting backwards into the parent cell (which would dead-end growth).
+    \\    var dx: i32 = 0; var dy: i32 = 0; var dz: i32 = 0;
+    \\    var best_score: f32 = -1000.0;
+    \\    for (var dir: u32 = 0u; dir < 6u; dir = dir + 1u) {
+    \\        var ox: i32 = 0; var oy: i32 = 0; var oz: i32 = 0;
+    \\        switch (dir) {
+    \\            case 0u: { ox = 1; }
+    \\            case 1u: { ox = -1; }
+    \\            case 2u: { oy = 1; }
+    \\            case 3u: { oy = -1; }
+    \\            case 4u: { oz = 1; }
+    \\            default: { oz = -1; }
     \\        }
-    \\    } else if (agy >= agx && agy >= agz) {
-    \\        dy1 = select(-1, 1, gy > 0.0);
-    \\        strongest = agy;
-    \\        if (agx >= agz) {
-    \\            dx2 = select(-1, 1, gx > 0.0);
-    \\            second = agx;
-    \\        } else {
-    \\            dz2 = select(-1, 1, gz > 0.0);
-    \\            second = agz;
-    \\        }
-    \\    } else {
-    \\        dz1 = select(-1, 1, gz > 0.0);
-    \\        strongest = agz;
-    \\        if (agx >= agy) {
-    \\            dx2 = select(-1, 1, gx > 0.0);
-    \\            second = agx;
-    \\        } else {
-    \\            dy2 = select(-1, 1, gy > 0.0);
-    \\            second = agy;
+    \\        let jitter = hash(x + dir * 13u, y + dir * 7u, z + dir * 5u, params.step) * 0.5;
+    \\        let s = score_direction(ix, iy, iz, ox, oy, oz) + jitter;
+    \\        if (s > best_score) {
+    \\            best_score = s;
+    \\            dx = ox; dy = oy; dz = oz;
     \\        }
     \\    }
     \\
-    \\    // 20% stochastic deviation on primary direction
-    \\    let rng = hash(x, y, z, params.step);
-    \\    if (rng < 0.2) {
-    \\        let dir_idx = u32(rng * 30.0) % 6u;
-    \\        dx1 = 0; dy1 = 0; dz1 = 0;
-    \\        switch (dir_idx) {
-    \\            case 0u: { dx1 = 1; }
-    \\            case 1u: { dx1 = -1; }
-    \\            case 2u: { dy1 = 1; }
-    \\            case 3u: { dy1 = -1; }
-    \\            case 4u: { dz1 = 1; }
-    \\            default: { dz1 = -1; }
-    \\        }
+    \\    // If every neighbor is out of bounds or occupied, the tip can't advance.
+    \\    var nx = ix + dx;
+    \\    var ny = iy + dy;
+    \\    var nz = iz + dz;
+    \\    let blocked = best_score < -50.0;
+    \\
+    \\    // Convert current cell to axon body (green)
+    \\    grid_out[idx]     = 1.0;
+    \\    grid_out[idx + 1u] = grid_in[idx + 1u];
+    \\    grid_out[idx + 2u] = 0.1;
+    \\    grid_out[idx + 3u] = 0.7;
+    \\    grid_out[idx + 4u] = 0.2;
+    \\    grid_out[idx + 5u] = 1.0;
+    \\
+    \\    // Place new tip if not blocked
+    \\    if (!blocked) {
+    \\        let nidx = cell_index(u32(nx), u32(ny), u32(nz));
+    \\        grid_out[nidx]     = 2.0;
+    \\        grid_out[nidx + 1u] = grid_in[nidx + 1u];
+    \\        grid_out[nidx + 2u] = 0.05;
+    \\        grid_out[nidx + 3u] = 0.9;
+    \\        grid_out[nidx + 4u] = 1.0;
+    \\        grid_out[nidx + 5u] = 1.0;
     \\    }
     \\
-    \\    // Branch if gradient is ambiguous (second direction is close to strongest)
-    \\    let branch_threshold = 0.7;
-    \\    let should_branch = strongest > 0.001 && second / strongest > branch_threshold && rng > 0.4;
-    \\
-    \\    if (should_branch) {
-    \\        // Convert to branch point (type=3, white)
-    \\        grid_out[idx]     = 3.0;
-    \\        grid_out[idx + 1u] = grid_in[idx + 1u];
-    \\        grid_out[idx + 2u] = 0.8;
-    \\        grid_out[idx + 3u] = 0.8;
-    \\        grid_out[idx + 4u] = 0.9;
-    \\        grid_out[idx + 5u] = 1.0;
-    \\
-    \\        // Primary branch tip
-    \\        let nx1 = ix + dx1;
-    \\        let ny1 = iy + dy1;
-    \\        let nz1 = iz + dz1;
-    \\        if (nx1 >= 0 && nx1 < i32(params.width) &&
-    \\            ny1 >= 0 && ny1 < i32(params.height) &&
-    \\            nz1 >= 0 && nz1 < i32(params.depth)) {
-    \\            let nidx1 = cell_index(u32(nx1), u32(ny1), u32(nz1));
-    \\            if (grid_in[nidx1] < 0.5) {
-    \\                grid_out[nidx1]     = 2.0;
-    \\                grid_out[nidx1 + 1u] = grid_in[nidx1 + 1u];
-    \\                grid_out[nidx1 + 2u] = 0.05;
-    \\                grid_out[nidx1 + 3u] = 0.9;
-    \\                grid_out[nidx1 + 4u] = 1.0;
-    \\                grid_out[nidx1 + 5u] = 1.0;
-    \\            }
+    \\    // 25% chance: also spawn a perpendicular branch tip
+    \\    let rng2 = hash(x + 11u, y + 17u, z + 23u, params.step);
+    \\    if (rng2 < 0.25 && !blocked) {
+    \\        // Pick perpendicular direction
+    \\        var bx: i32 = 0; var by: i32 = 0; var bz: i32 = 0;
+    \\        let perp_rng = hash(x + 31u, y + 37u, z + 41u, params.step);
+    \\        if (dx != 0) {
+    \\            if (perp_rng < 0.5) { by = select(-1, 1, perp_rng < 0.25); }
+    \\            else { bz = select(-1, 1, perp_rng < 0.75); }
+    \\        } else if (dy != 0) {
+    \\            if (perp_rng < 0.5) { bx = select(-1, 1, perp_rng < 0.25); }
+    \\            else { bz = select(-1, 1, perp_rng < 0.75); }
+    \\        } else {
+    \\            if (perp_rng < 0.5) { bx = select(-1, 1, perp_rng < 0.25); }
+    \\            else { by = select(-1, 1, perp_rng < 0.75); }
     \\        }
-    \\
-    \\        // Secondary branch tip
-    \\        let nx2 = ix + dx2;
-    \\        let ny2 = iy + dy2;
-    \\        let nz2 = iz + dz2;
-    \\        if (nx2 >= 0 && nx2 < i32(params.width) &&
-    \\            ny2 >= 0 && ny2 < i32(params.height) &&
-    \\            nz2 >= 0 && nz2 < i32(params.depth)) {
-    \\            let nidx2 = cell_index(u32(nx2), u32(ny2), u32(nz2));
-    \\            if (grid_in[nidx2] < 0.5) {
-    \\                grid_out[nidx2]     = 2.0;
-    \\                grid_out[nidx2 + 1u] = grid_in[nidx2 + 1u];
-    \\                grid_out[nidx2 + 2u] = 0.05;
-    \\                grid_out[nidx2 + 3u] = 0.9;
-    \\                grid_out[nidx2 + 4u] = 1.0;
-    \\                grid_out[nidx2 + 5u] = 1.0;
-    \\            }
-    \\        }
-    \\    } else {
-    \\        // Single advance: convert to axon body (type=1, muted blue)
-    \\        grid_out[idx]     = 1.0;
-    \\        grid_out[idx + 1u] = grid_in[idx + 1u];
-    \\        grid_out[idx + 2u] = 0.15;
-    \\        grid_out[idx + 3u] = 0.3;
-    \\        grid_out[idx + 4u] = 0.6;
-    \\        grid_out[idx + 5u] = 1.0;
-    \\
-    \\        // Place new tip
-    \\        let nx = ix + dx1;
-    \\        let ny = iy + dy1;
-    \\        let nz = iz + dz1;
-    \\        if (nx >= 0 && nx < i32(params.width) &&
-    \\            ny >= 0 && ny < i32(params.height) &&
-    \\            nz >= 0 && nz < i32(params.depth)) {
-    \\            let nidx = cell_index(u32(nx), u32(ny), u32(nz));
-    \\            if (grid_in[nidx] < 0.5) {
-    \\                grid_out[nidx]     = 2.0;
-    \\                grid_out[nidx + 1u] = grid_in[nidx + 1u];
-    \\                grid_out[nidx + 2u] = 0.05;
-    \\                grid_out[nidx + 3u] = 0.9;
-    \\                grid_out[nidx + 4u] = 1.0;
-    \\                grid_out[nidx + 5u] = 1.0;
-    \\            }
+    \\        let bnx = ix + bx;
+    \\        let bny = iy + by;
+    \\        let bnz = iz + bz;
+    \\        if (bnx >= 0 && bnx < i32(params.width) &&
+    \\            bny >= 0 && bny < i32(params.height) &&
+    \\            bnz >= 0 && bnz < i32(params.depth) &&
+    \\            is_occupied(bnx, bny, bnz) < 0.5 &&
+    \\            neighbor_density(bnx, bny, bnz) < 10.0) {
+    \\            // Mark self as branch point instead of axon
+    \\            grid_out[idx]     = 3.0;
+    \\            grid_out[idx + 2u] = 1.0;
+    \\            grid_out[idx + 3u] = 0.95;
+    \\            grid_out[idx + 4u] = 0.7;
+    \\            // Place branch tip
+    \\            let bidx = cell_index(u32(bnx), u32(bny), u32(bnz));
+    \\            grid_out[bidx]     = 2.0;
+    \\            grid_out[bidx + 1u] = grid_in[bidx + 1u];
+    \\            grid_out[bidx + 2u] = 0.05;
+    \\            grid_out[bidx + 3u] = 0.9;
+    \\            grid_out[bidx + 4u] = 1.0;
+    \\            grid_out[bidx + 5u] = 1.0;
     \\        }
     \\    }
     \\}
@@ -449,6 +492,16 @@ pub const Simulation = struct {
             c.wgpuCommandBufferRelease(cmd);
         }
         grid.swap();
+
+        // Pre-copy read → write so growth shader only needs to modify tip cells
+        {
+            const enc = c.wgpuDeviceCreateCommandEncoder(self.device, null);
+            c.wgpuCommandEncoderCopyBufferToBuffer(enc, grid.readBuffer(), 0, grid.writeBuffer(), 0, grid.buffer_size);
+            const cmd = c.wgpuCommandEncoderFinish(enc, null);
+            c.wgpuCommandEncoderRelease(enc);
+            c.wgpuQueueSubmit(queue, 1, &cmd);
+            c.wgpuCommandBufferRelease(cmd);
+        }
 
         // Pass 2: Growth
         {
