@@ -6,17 +6,20 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "morphogen",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
-    // GLFW
-    const glfw_dep = b.dependency("glfw", .{
+    // GLFW (zig-gamedev/zglfw — bundles GLFW C source, builds it from scratch)
+    const zglfw_dep = b.dependency("zglfw", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("glfw", glfw_dep.module("glfw"));
+    exe.root_module.addImport("zglfw", zglfw_dep.module("root"));
+    exe.linkLibrary(zglfw_dep.artifact("glfw"));
 
     // wgpu-native (vendored)
     exe.addIncludePath(b.path("vendor/wgpu/include"));

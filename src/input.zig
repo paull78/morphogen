@@ -1,5 +1,5 @@
 const std = @import("std");
-const glfw = @import("glfw");
+const glfw = @import("zglfw");
 const Camera = @import("camera.zig").Camera;
 
 pub const Input = struct {
@@ -36,34 +36,34 @@ pub const Input = struct {
     }
 
     /// Set up GLFW callbacks that require user pointer (scroll).
-    pub fn setupCallbacks(self: *Input, window: glfw.Window) void {
+    pub fn setupCallbacks(self: *Input, window: *glfw.Window) void {
         window.setUserPointer(self);
-        window.setScrollCallback(scrollCallback);
+        _ = window.setScrollCallback(scrollCallback);
     }
 
-    fn scrollCallback(window: glfw.Window, _: f64, yoffset: f64) void {
+    fn scrollCallback(window: *glfw.Window, _: f64, yoffset: f64) callconv(.c) void {
         const self = window.getUserPointer(Input) orelse return;
         self.camera.zoom(@floatCast(yoffset));
     }
 
     /// Poll mouse and keyboard state. Call once per frame.
-    pub fn update(self: *Input, window: glfw.Window) void {
+    pub fn update(self: *Input, window: *glfw.Window) void {
         // Mouse drag (orbit)
         const cursor_pos = window.getCursorPos();
         const left_button = window.getMouseButton(.left);
 
         if (left_button == .press) {
             if (self.dragging) {
-                const dx = cursor_pos.xpos - self.last_x;
-                const dy = cursor_pos.ypos - self.last_y;
+                const dx = cursor_pos[0] - self.last_x;
+                const dy = cursor_pos[1] - self.last_y;
                 self.camera.orbit(@floatCast(dx), @floatCast(dy));
             }
             self.dragging = true;
         } else {
             self.dragging = false;
         }
-        self.last_x = cursor_pos.xpos;
-        self.last_y = cursor_pos.ypos;
+        self.last_x = cursor_pos[0];
+        self.last_y = cursor_pos[1];
 
         // Space: toggle pause (rising edge)
         const space_pressed = window.getKey(.space) == .press;
@@ -99,8 +99,8 @@ pub const Input = struct {
         const right_button = window.getMouseButton(.right);
         if (right_button == .press) {
             self.should_place_signal = true;
-            self.signal_click_x = cursor_pos.xpos;
-            self.signal_click_y = cursor_pos.ypos;
+            self.signal_click_x = cursor_pos[0];
+            self.signal_click_y = cursor_pos[1];
         }
     }
 };

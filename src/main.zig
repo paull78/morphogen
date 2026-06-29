@@ -1,5 +1,5 @@
 const std = @import("std");
-const glfw = @import("glfw");
+const glfw = @import("zglfw");
 const Gpu = @import("gpu.zig").Gpu;
 const Grid = @import("grid.zig").Grid;
 const Simulation = @import("simulation.zig").Simulation;
@@ -54,24 +54,22 @@ fn createMetalLayer(ns_window: *anyopaque) ?*anyopaque {
 
 pub fn main() !void {
     // Initialize GLFW
-    if (!glfw.init(.{})) {
+    glfw.init() catch {
         std.debug.print("Failed to initialize GLFW\n", .{});
         return error.GLFWInitFailed;
-    }
+    };
     defer glfw.terminate();
 
     // Create window -- no OpenGL context (we'll use wgpu)
-    const window = glfw.Window.create(800, 600, "morphogen", null, null, .{
-        .client_api = .no_api,
-    }) orelse {
+    glfw.windowHint(.client_api, .no_api);
+    const window = glfw.Window.create(800, 600, "morphogen", null, null) catch {
         std.debug.print("Failed to create GLFW window\n", .{});
         return error.WindowCreateFailed;
     };
     defer window.destroy();
 
-    // Get NSWindow via zig-glfw native API
-    const native = glfw.Native(.{ .cocoa = true });
-    const ns_window = native.getCocoaWindow(window) orelse {
+    // Get NSWindow via zglfw native API
+    const ns_window = glfw.getCocoaWindow(window) orelse {
         std.debug.print("Failed to get Cocoa window\n", .{});
         return error.CocoaWindowFailed;
     };
@@ -83,21 +81,21 @@ pub fn main() !void {
     };
 
     const fb_size = window.getFramebufferSize();
-    var gpu = try Gpu.init(metal_layer, fb_size.width, fb_size.height);
+    var gpu = try Gpu.init(metal_layer, @intCast(fb_size[0]), @intCast(fb_size[1]));
     defer gpu.deinit();
 
     std.debug.print("morphogen: GPU initialized, rendering...\n", .{});
 
-    // Create grid: 64x64x64, 6 floats/cell [type, signal, r, g, b, a]
-    var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 64, 64, 64, 6);
+    // Create grid: 128x128x128, 6 floats/cell [type, signal, r, g, b, a]
+    var grid = try Grid.init(gpu.device, gpu.queue, gpu.instance, 128, 128, 128, 6);
     defer grid.deinit();
 
     // Seed single growth tip at center: type=2, signal=0, bright cyan, full opacity
     const seed_cell = [_]f32{ 2.0, 0.0, 0.05, 0.9, 1.0, 1.0 };
     grid.seedCenter(&seed_cell);
 
-    // Signal source above grid center at (32, 60, 32)
-    var sim = try Simulation.init(gpu.device, &grid, 32, 60, 32);
+    // Signal source above grid center
+    var sim = try Simulation.init(gpu.device, &grid, 64, 120, 64);
     defer sim.deinit();
 
     // Set up orbit camera and input handling
@@ -121,8 +119,8 @@ pub fn main() !void {
             if (camera.clickToGridPos(
                 @floatCast(input.signal_click_x),
                 @floatCast(input.signal_click_y),
-                fb.width,
-                fb.height,
+                @intCast(fb[0]),
+                @intCast(fb[1]),
                 grid.width,
                 grid.height,
                 grid.depth,
@@ -154,13 +152,15 @@ pub fn main() !void {
 
         // Handle resize
         const size = window.getFramebufferSize();
-        if (size.width != gpu.surface_config.width or size.height != gpu.surface_config.height) {
-            if (size.width > 0 and size.height > 0) {
-                gpu.resize(size.width, size.height);
+        const sw: u32 = @intCast(size[0]);
+        const sh: u32 = @intCast(size[1]);
+        if (sw != gpu.surface_config.width or sh != gpu.surface_config.height) {
+            if (sw > 0 and sh > 0) {
+                gpu.resize(sw, sh);
             }
         }
 
-        const camera_data = camera.buildUniformData(size.width, size.height);
+        const camera_data = camera.buildUniformData(sw, sh);
         gpu.renderFrameWithGrid(&grid, &camera_data);
         frame_count += 1;
     }

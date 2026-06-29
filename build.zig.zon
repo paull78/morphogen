@@ -2,11 +2,11 @@
     .name = .morphogen,
     .fingerprint = 0x724d948d7ecb571,
     .version = "0.0.1",
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.0",
     .dependencies = .{
-        .glfw = .{
-            .url = "git+https://github.com/falsepattern/zig-glfw#d7d336a606040cac8dde395a33ac5b02bd8d5c6d",
-            .hash = "glfw-0.3.0-YPzX96IuBQAxnlG-CIYgD6I-I47XwiJHRmjkKP--t_zv",
+        .zglfw = .{
+            .url = "git+https://github.com/zig-gamedev/zglfw#51003c105d23db378bb59ce415a387b22f1b0892",
+            .hash = "zglfw-0.10.0-dev-zgVDNIy4IQDJNRy4jrP1As-SZxfJpuWhU1iJ-wBab_VD",
         },
     },
     .paths = .{"."},
