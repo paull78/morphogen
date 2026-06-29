@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.2
+      # Runs the pure-logic unit tests (camera math, ray casting).
+      # These don't need the vendored wgpu binary or a GPU.
+      - run: zig build test

@@ -1,11 +1,11 @@
 # morphogen
 
+[![CI](https://github.com/paull78/morphogen/actions/workflows/ci.yml/badge.svg)](https://github.com/paull78/morphogen/actions/workflows/ci.yml)
+
 GPU-accelerated growth simulation in Zig. Cells follow local rules to self-organize
 into branching, tree-like structures — like nervous systems, root networks, or
 vascular trees.
 
-<!-- TODO: drop a 5–10s GIF here — structure growing + right-click signal placement.
-     Capture it with the in-app screenshot key (P) / a screen recorder. -->
 ![morphogen growing a branching structure](docs/assets/demo.gif)
 
 Starts with simple cellular automata and progresses toward learned neural growth
@@ -69,6 +69,12 @@ A few things this project taught me that I didn't know going in:
   shader is actually doing what you think.
 - **Volumetric raymarching with DDA voxel traversal**, double-buffered simulation
   state, and stochastic cellular-automaton rules with age-based coloring.
+- **Hardest bug so far:** growth froze at two cells. With the signal source far from
+  the seed the chemical gradient was ~0, so every growth tip defaulted to advancing
+  −x — straight back into its own parent cell — got blocked, and died. The fix was to
+  score all six neighbours (signal pull minus crowding, plus jitter) so tips wander
+  into open space when the field is flat. I found it by reading the alive-cell count
+  and positions back off the GPU each step rather than guessing.
 
 ## Controls
 
@@ -90,6 +96,12 @@ Requires:
 
 ```bash
 zig build run
+```
+
+Run the unit tests (pure camera/ray-casting logic, no GPU needed) with:
+
+```bash
+zig build test
 ```
 
 > **Platform:** Developed and tested on **macOS (Apple Silicon)**. The surface-creation
