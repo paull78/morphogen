@@ -135,3 +135,42 @@ pub const Camera = struct {
         return data;
     }
 };
+
+const testing = std.testing;
+
+test "orbit clamps phi away from the poles" {
+    var cam = Camera.init();
+    cam.orbit(0, 100000); // drag far up
+    try testing.expect(cam.phi < std.math.pi / 2.0);
+    cam.orbit(0, -200000); // drag far down
+    try testing.expect(cam.phi > -std.math.pi / 2.0);
+}
+
+test "zoom clamps radius to its range" {
+    var zoom_in = Camera.init();
+    zoom_in.zoom(100); // huge zoom-in would overshoot past zero
+    try testing.expectEqual(@as(f32, 0.5), zoom_in.radius);
+
+    var zoom_out = Camera.init();
+    zoom_out.zoom(-1000); // huge zoom-out
+    try testing.expectEqual(@as(f32, 10.0), zoom_out.radius);
+}
+
+test "buildUniformData packs eye position and viewport" {
+    const cam = Camera.init();
+    const data = cam.buildUniformData(800, 600);
+    const eye = cam.position();
+    try testing.expectEqual(eye[0], data[16]);
+    try testing.expectEqual(eye[1], data[17]);
+    try testing.expectEqual(eye[2], data[18]);
+    try testing.expectEqual(@as(f32, 800), data[20]);
+    try testing.expectEqual(@as(f32, 600), data[21]);
+}
+
+test "clicking the screen centre hits a voxel inside the grid" {
+    const cam = Camera.init(); // looks at the centre of the unit cube
+    const hit = cam.clickToGridPos(400, 300, 800, 600, 128, 128, 128);
+    try testing.expect(hit != null);
+    const p = hit.?;
+    try testing.expect(p[0] < 128 and p[1] < 128 and p[2] < 128);
+}

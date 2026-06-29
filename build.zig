@@ -42,4 +42,19 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run morphogen");
     run_step.dependOn(&run_cmd.step);
+
+    // Unit tests for the pure-logic modules (camera math, ray casting).
+    // These need the wgpu headers for @cImport but not the static library,
+    // so `zig build test` runs without the vendored binary or a GPU.
+    const test_mod = b.createModule(.{
+        .root_source_file = b.path("src/camera.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_mod.addIncludePath(b.path("vendor/wgpu/include"));
+    const unit_tests = b.addTest(.{ .root_module = test_mod });
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_unit_tests.step);
 }
